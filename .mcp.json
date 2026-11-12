@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "work-inbox": {
+      "command": "bun",
+      "args": ["src/mcp/server.ts"],
+      "env": { "WORK_INBOX_URL": "http://127.0.0.1:3571" }
+    }
+  }
+}

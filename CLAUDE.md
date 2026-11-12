@@ -24,6 +24,9 @@ Built and unit-tested in a Linux cloud container with fixtures. Please verify, i
 - Summary size: 20/50/100/200/custom (max 500), default 20 and changeable in the UI. Older history is pulled from WAHA with a GET when fewer messages are stored.
 - This replaced the old global `ALLOW_CHAT_TO_LLM` switch; consent is now per chat.
 
+## Claude Code protocol (MCP)
+`src/mcp/*` + `.mcp.json`; spec in `docs/PROTOCOL.md`. Tools map 1:1 to REST endpoints; there is no tool that sends WhatsApp. If you are Claude Code working in this repo you can use the `work-inbox` tools against the running app (`bun run dev`).
+
 ## Settings (everything is configurable)
 `src/server/settings.ts` holds the schema (FIELDS). Precedence: default < `.env` < saved (SQLite `settings`, keys `cfg.*`). Secrets (Jira/GitHub tokens, WAHA key, webhook token) live in the macOS Keychain (`secrets.ts`; file fallback off-Mac) and are never returned by the API or logged. `ConfigManager` mutates the shared `cfg` in place, adapters read `cfg` per call, rule-affecting saves trigger an immediate rebuild. UI: `src/web/Settings.tsx` (press `,`). Add a new option = add a FIELDS entry + use `cfg.x`.
 Verify on the Mac: Settings → each group's "Test ..." button, then the Keychain prompts when saving a token.

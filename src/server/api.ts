@@ -7,6 +7,7 @@ import { completeReminder, createReminder, type RemindersDeps } from "./adapters
 import { handleWahaWebhook } from "./adapters/whatsapp";
 import { draftReply, judgeItems, latestDraft, type Runner } from "./claude";
 import { backfillChat } from "./adapters/whatsapp";
+import { chatMessages } from "./chatllm";
 import { autoHandleChats, clampN, getMode, latestSummary, LLM_MODES, modesByItem, setMode, summarizeChat, summaryDefault, type LlmMode } from "./chatllm";
 import { testConnection, type Exec, type Target } from "./connect-test";
 import type { ConfigManager } from "./settings";
@@ -80,6 +81,23 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
     if (blocked) return blocked;
     const path = url.pathname.slice(4);
     const method = req.method;
+
+    // ---- read endpoints used by Claude Code (MCP) and handy for scripts ----
+    if (method === "GET" && path === "/chat-messages") {
+      const key = url.searchParams.get("key") ?? "";
+      const n = clampN(url.searchParams.get("n"), summaryDefault(db, cfg));
+      if (!key.startsWith("chat:")) return json({ error: "key must be a chat item key" }, 400);
+      if (getMode(db, key) === "never") return json({ error: "This chat is set to Never: its text is not shared with Claude." }, 403);
+      const stored = (db.query("SELECT COUNT(*) AS c FROM events WHERE native_key = ?").get(key) as { c: number }).c;
+      if (stored < n && cfg.whatsapp) await backfillChat(db, { cfg: cfg.whatsapp }, key, n).catch(() => undefined);
+      const msgs = chatMessages(db, key, n).map((m) => ({ ts: m.ts, author: m.authorIsMe ? "ME" : m.author, authorIsMe: m.authorIsMe, mentionsMe: m.mentionsMe, body: m.body }));
+      return json({ itemKey: key, count: msgs.length, messages: msgs });
+    }
+    const one = path.match(/^\/items\/(.+)$/);
+    if (method === "GET" && one) {
+      const it = listItems(db, Date.now()).find((i) => i.itemKey === decodeURIComponent(one[1]!));
+      return it ? json({ ...it, draft: latestDraft(db, it.itemKey)?.body ?? null, summary: it.itemKey.startsWith("chat:") ? latestSummary(db, it.itemKey) : null }) : json({ error: "unknown item" }, 404);
+    }
 
     // ---- work board ----
     if (method === "GET" && path === "/board") {
@@ -189,7 +207,7 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
       }
     }
 
-    const m = path.match(/^\/items\/(.+)\/(dismiss|snooze|restore|accept|transition|comment|draft|remind|complete|summarize|llm-mode|board)$/);
+    const m = path.match(/^\/items\/(.+)\/(dismiss|snooze|restore|accept|transition|comment|draft|draft-save|remind|complete|summarize|llm-mode|board)$/);
     if (method !== "POST" || !m) return json({ error: "not found" }, 404);
 
     const itemKey = decodeURIComponent(m[1]!);
@@ -236,6 +254,14 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
         return json({ ok: true, summary });
       }
 
+      if (action === "draft-save") {
+        const text = String(body.text ?? "").trim();
+        if (!itemKey.startsWith("chat:") || !text) return fail(400, "A draft needs a chat item and some text");
+        db.query("INSERT INTO drafts (item_key, body, created_at) VALUES (?, ?, ?)").run(itemKey, text.slice(0, 4000), Date.now());
+        logAction(db, itemKey, "draft-save", { by: req.headers.get("x-client") ?? "ui" }, true, "saved (copy-only, never sent)");
+        return json({ ok: true });
+      }
+
       if (action === "draft") {
         const draft = await draftReply(db, cfg, run, itemKey);
         logAction(db, itemKey, "draft", {}, true, "drafted (not sent)");
@@ -268,6 +294,7 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
       }
 
       // Jira writes need a ticket key and an explicit confirmation from the UI
+      if (req.headers.get("x-client") === "mcp" && !cfg.mcpAllowWrites) return fail(403, "Claude Code is not allowed to write to Jira. Turn on Settings → Claude Code → Let Claude Code write to Jira.");
       const ticket = item.ticketKey;
       if (!cfg.jira || !ticket) return fail(400, "Jira not configured or this item has no linked ticket");
       if (body.confirm !== true) return fail(400, "Confirmation required");
