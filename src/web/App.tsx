@@ -273,13 +273,11 @@ export function App() {
       </aside>
 
       <div className="main">
-        {view !== "settings" && (
-          <div className="topbar">
-            <h1>{view === "inbox" ? "Inbox" : "Board"}</h1>
-            <span className="sub">{today}{view === "inbox" && data.hiddenCount ? ` · ${data.hiddenCount} hidden` : ""}</span>
-            {view === "board" && <div className="actions"><NewCardButton onClick={() => setAdding(board?.columns[0] ?? null)} /></div>}
-          </div>
-        )}
+        <div className="topbar">
+          <h1>{view === "inbox" ? "Inbox" : view === "board" ? "Board" : "Settings"}</h1>
+          <span className="sub">{view === "settings" ? "changes save instantly · tokens go to the Keychain" : today}{view === "inbox" && data.hiddenCount ? ` · ${data.hiddenCount} hidden` : ""}</span>
+          {view === "board" && <div className="actions"><NewCardButton onClick={() => setAdding(board?.columns[0] ?? null)} /></div>}
+        </div>
         {view !== "settings" && down.map((s) => (
           <div key={s.source} className="banner"><b>{SOURCE_LABEL[s.source]}:</b> {s.banner ?? s.error ?? "problem"}{!s.banner && " Items from this source may be missing, not absent."}</div>
         ))}

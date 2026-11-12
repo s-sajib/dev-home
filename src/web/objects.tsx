@@ -3,7 +3,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type Reac
 import type { Keymap } from "../shared/keys";
 import type { Item } from "./Chat";
 import { FLAG_LABEL, VERDICT_LABEL, ago, flagTone, sortFlags, type Tone } from "./format";
-import { AlarmClockIcon, ArrowUpRightIcon, CircleCheckIcon, GitPullRequestIcon, MessageCircleIcon, StickyNoteIcon, TicketIcon, useIconHover, type IconHandle } from "./icons";
+import { AlarmClockIcon, ArrowUpRightIcon, CheckIcon, CircleCheckIcon, GitPullRequestIcon, MessageCircleIcon, StickyNoteIcon, TicketIcon, useIconHover, type IconHandle } from "./icons";
 import { Tip } from "./ui";
 
 /**
@@ -75,7 +75,7 @@ export function ObjectRow({ item, now, selected, index = 0, onClick, detail, don
   const hover = useIconHover();
   return (
     <motion.button
-      layout="position" className={`row ${selected ? "selected" : ""}`} data-key={item.itemKey} onClick={onClick} {...hover.triggerProps}
+      layout="position" className={`row ${selected ? "selected" : ""} ${item.accepted ? "accepted" : ""}`} data-key={item.itemKey} onClick={onClick} {...hover.triggerProps}
       variants={{ hidden: { opacity: 0, y: 6 }, rest: { opacity: 1, y: 0, x: 0, transition: { delay: Math.min(index, 14) * 0.03 } } }}
       initial="hidden" animate="rest" exit={{ opacity: 0, x: -14, transition: { duration: 0.2 } }}
     >
@@ -83,7 +83,7 @@ export function ObjectRow({ item, now, selected, index = 0, onClick, detail, don
       <Glyph ref={hover.ref} kind={kind} live={kind === "reminder" && item.flags.includes("overdue_reminder")} done={done} />
       <div className="rb">
         <div className="t">{item.title}</div>
-        {line && <div className="why">{w && <Lamp tone={w.tone} />}{line}</div>}
+        {line && <div className="why">{item.accepted ? <CheckIcon size={12} /> : w && <Lamp tone={w.tone} />}{item.accepted ? "Accepted · " : ""}{line}</div>}
       </div>
       <span className="when">{ago(item.lastActivity, now)}</span>
     </motion.button>

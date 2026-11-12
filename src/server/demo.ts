@@ -135,3 +135,21 @@ export const demoRunner: Runner = async (prompt, schema) => {
   const keys = [...prompt.matchAll(/<data id="([^"]+)">/g)].map((m) => m[1]!);
   return { verdicts: keys.map((k) => ({ itemKey: k, verdict: known[k]?.[0] ?? "needs_me", reason: known[k]?.[1] ?? "Needs a look." })) };
 };
+
+/** Demo mode has no Jira, so writes are simulated locally: a transition updates the ticket's status, a comment is "posted" as me. */
+export function demoTransition(db: DB, ticketKey: string, status: string, now = Date.now()): string {
+  const row = db.query("SELECT id, meta FROM events WHERE source = 'jira' AND source_id = ?").get(`issue:${ticketKey}`) as { id: number; meta: string } | null;
+  if (!row) throw new Error(`Unknown ticket ${ticketKey}`);
+  const meta = JSON.parse(row.meta);
+  const from = meta.status;
+  meta.status = status;
+  meta.statusCategory = /done|closed/i.test(status) ? "done" : /to do|backlog/i.test(status) ? "new" : "indeterminate";
+  db.query("UPDATE events SET meta = ?, ts = ? WHERE id = ?").run(JSON.stringify(meta), now, row.id);
+  upsertEvents(db, [{ source: "jira", sourceId: `status:${ticketKey}:${now}`, kind: "status_change", nativeKey: `ticket:${ticketKey}`, ticketKey, title: "", author: "Me", authorIsMe: true, body: `${from} → ${status}`, url: null, ts: now, mentionsMe: false, meta: { from, to: status } }]);
+  return `${ticketKey} → ${status}`;
+}
+
+export function demoComment(db: DB, ticketKey: string, text: string, now = Date.now()): string {
+  upsertEvents(db, [{ source: "jira", sourceId: `comment:${ticketKey}:${now}`, kind: "comment", nativeKey: `ticket:${ticketKey}`, ticketKey, title: "", author: "Me", authorIsMe: true, body: text, url: null, ts: now, mentionsMe: false, meta: {} }]);
+  return `commented on ${ticketKey}`;
+}

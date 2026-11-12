@@ -76,3 +76,21 @@ describe("api", () => {
     expect((db.query("SELECT item_key FROM reminder_links WHERE reminder_id = 'NEW-ID'").get() as any).item_key).toBe("ticket:WEB-402");
   });
 });
+
+describe("demo mode simulates Jira writes locally", () => {
+  test("a transition moves the ticket and its board card; a comment clears an unanswered question", async () => {
+    const { call } = make();
+    await call("GET", "/api/board"); // sync cards
+    expect((await call("POST", "/api/items/ticket:WEB-402/transition", { status: "In Progress" })).status).toBe(400); // still needs confirm
+    const r = await call("POST", "/api/items/ticket:WEB-402/transition", { status: "In Progress", confirm: true });
+    expect(r.json.result).toBe("WEB-402 → In Progress");
+    const card = (await call("GET", "/api/board")).json.cards.find((c: any) => c.itemKey === "ticket:WEB-402");
+    expect(card.col).toBe("In Progress");
+    expect(card.status).toBe("In Progress");
+
+    expect((await call("GET", "/api/inbox")).json.items.find((i: any) => i.itemKey === "ticket:API-77").flags).toContain("unanswered_comment");
+    await call("POST", "/api/items/ticket:API-77/comment", { text: "Opaque cursor. I'll confirm with mobile.", confirm: true });
+    const after = (await call("GET", "/api/inbox")).json.items.find((i: any) => i.itemKey === "ticket:API-77");
+    expect(after?.flags ?? []).not.toContain("unanswered_comment");
+  });
+});

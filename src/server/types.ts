@@ -54,6 +54,8 @@ export interface InboxItem {
   /** Visible = not dismissed/snoozed (or resurfaced by new activity) */
   hidden: boolean;
   snoozedUntil: number | null;
+  /** I pressed accept and nothing has happened on it since */
+  accepted: boolean;
   events: ItemEvent[];
 }
 

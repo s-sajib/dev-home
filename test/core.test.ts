@@ -98,3 +98,19 @@ describe("inbox pipeline (demo data)", () => {
     expect(n).toBe(demoEvents(now).length);
   });
 });
+
+describe("accept", () => {
+  test("accepting marks an item until something new happens on it", async () => {
+    const { acceptItem } = await import("../src/server/inbox");
+    const now = Date.now();
+    const db = openDb(":memory:");
+    upsertEvents(db, demoEvents(now));
+    rebuildItems(db, ctx(now));
+    expect(listItems(db, now).find((i) => i.itemKey === "ticket:OPS-88")!.accepted).toBe(false);
+    acceptItem(db, "ticket:OPS-88");
+    expect(listItems(db, now).find((i) => i.itemKey === "ticket:OPS-88")!.accepted).toBe(true);
+    upsertEvents(db, [{ source: "jira", sourceId: "comment:OPS-88:77", kind: "comment", nativeKey: "ticket:OPS-88", ticketKey: "OPS-88", title: "OPS-88 x", author: "Sam", authorIsMe: false, body: "any update?", url: null, ts: now - 100, mentionsMe: true, meta: {} }]);
+    rebuildItems(db, ctx(now));
+    expect(listItems(db, now).find((i) => i.itemKey === "ticket:OPS-88")!.accepted).toBe(false); // new activity un-accepts
+  });
+});

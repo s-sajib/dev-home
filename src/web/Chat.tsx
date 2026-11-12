@@ -95,7 +95,7 @@ export function Chat(p: ChatProps) {
           </div>
         </div>
       </div>
-      {(w || item.reason) && <p className="whyline" style={{ marginTop: 14 }}>{w && <Lamp tone={w.tone} />}{[w?.text, item.reason].filter(Boolean).join(" · ")}</p>}
+      {(w || item.reason) && <p className="whyline" style={{ marginTop: 14 }}>{item.accepted ? <CheckIcon size={13} /> : w && <Lamp tone={w.tone} />}{[item.accepted ? "Accepted" : null, w?.text, item.reason].filter(Boolean).join(" · ")}</p>}
       <Verbs lead={summarise} verbs={p.verbs} />
       {p.relatedNode}
 

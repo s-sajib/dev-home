@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { Config } from "./config";
 import type { DB } from "./db";
-import { dismissItem, listItems, rebuildItems, restoreItem, snoozeItem } from "./inbox";
+import { acceptItem, dismissItem, listItems, rebuildItems, restoreItem, snoozeItem } from "./inbox";
 import { jiraComment, jiraTransition } from "./adapters/jira";
 import { completeReminder, createReminder, type RemindersDeps } from "./adapters/reminders";
 import { handleWahaWebhook } from "./adapters/whatsapp";
@@ -12,7 +12,7 @@ import { autoHandleChats, clampN, getMode, latestSummary, LLM_MODES, modesByItem
 import { testConnection, type Exec, type Target } from "./connect-test";
 import type { ConfigManager } from "./settings";
 import { addCard, getBoard, moveCard, removeCard, syncBoard, updateCard } from "./board";
-import { demoRunner as demoAI, seedDemo } from "./demo";
+import { demoComment, demoRunner as demoAI, demoTransition, seedDemo } from "./demo";
 import { getStatuses, pollOnce } from "./poller";
 import { logAction } from "./store";
 import type { SourceAdapter } from "./types";
@@ -244,6 +244,7 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
         const override = (action === "dismiss" && item.verdict === "needs_me") || (action === "accept" && item.verdict === "drop");
         if (override) logAction(db, itemKey, "verdict_override", { verdict: item.verdict, action }, true, "override");
         if (action === "dismiss") dismissItem(db, itemKey);
+        else if (action === "accept") acceptItem(db, itemKey);
         else if (action === "snooze") snoozeItem(db, itemKey, Date.now() + Number(body.hours ?? cfg.snoozeHours) * 3_600_000);
         logAction(db, itemKey, action, body, true, "ok");
         return json({ ok: true });
@@ -311,6 +312,14 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
       // Jira writes need a ticket key and an explicit confirmation from the UI
       if (req.headers.get("x-client") === "mcp" && !cfg.mcpAllowWrites) return fail(403, "Claude Code is not allowed to write to Jira. Turn on Settings → Claude Code → Let Claude Code write to Jira.");
       const ticket = item.ticketKey;
+      if (cfg.demo && !cfg.jira && ticket) {
+        if (body.confirm !== true) return fail(400, "Confirmation required");
+        const result = action === "transition" ? demoTransition(db, ticket, String(body.status)) : demoComment(db, ticket, String(body.text));
+        refresh();
+        syncBoard(db, cfg);
+        logAction(db, itemKey, action, { ticket, status: body.status, demo: true }, true, result);
+        return json({ ok: true, result });
+      }
       if (!cfg.jira || !ticket) return fail(400, "Jira not configured or this item has no linked ticket");
       if (body.confirm !== true) return fail(400, "Confirmation required");
       const deps = { baseUrl: cfg.jira.baseUrl, email: cfg.jira.email, token: cfg.jira.token };

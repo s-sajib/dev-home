@@ -59,3 +59,15 @@ test("an item can be added to the board from the inbox", async ({ page, request 
   const board = await api(request, "/api/board");
   expect(board.cards.some((c: any) => c.itemKey === "chat:447700900007@c.us")).toBe(true);
 });
+
+test("accept shows a check on the row until something new happens", async ({ page }) => {
+  await page.click('[data-testid=list] .row:has-text("OPS-88")');
+  await page.keyboard.press("a");
+  await expect(page.locator('[data-testid=list] .row:has-text("OPS-88")')).toContainText("Accepted");
+  await expect(page.locator('[data-testid=list] .row.accepted')).toHaveCount(1);
+});
+
+test("settings has the same toolbar as the other screens", async ({ page }) => {
+  await page.keyboard.press(",");
+  await expect(page.locator(".topbar h1")).toHaveText("Settings");
+});

@@ -1,5 +1,5 @@
 import { LayoutGroup, motion } from "motion/react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ago } from "./format";
 import { useIconHover } from "./icons";
 import { Glyph, Lamp, kindOf, why } from "./objects";
@@ -22,6 +22,7 @@ export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<{ col: string; index: number } | null>(null);
   const colRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  useEffect(() => { document.querySelector(".card.selected")?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" }); }, [sel]);
 
   const indexAt = (col: string, y: number): number => {
     const els = Array.from(colRefs.current[col]?.querySelectorAll<HTMLElement>("[data-card]") ?? []).filter((el) => Number(el.dataset.card) !== drag);
@@ -41,7 +42,7 @@ export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding
               onDragOver={(e) => { e.preventDefault(); setOver({ col, index: indexAt(col, e.clientY) }); }}
               onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver((o) => (o?.col === col ? null : o)); }}
               onDrop={(e) => { e.preventDefault(); const id = Number(e.dataTransfer.getData("text/plain")) || drag; if (id) onMove(id, col, indexAt(col, e.clientY)); setDrag(null); setOver(null); }}>
-              <header>
+              <header onClick={(e) => (e.currentTarget.parentElement as HTMLElement).scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" })}>
                 <i />
                 <h2>{col}</h2><span className="n">{cards.length}</span>
                 <button className="add" title="Add card" onClick={() => setAdding(col)} aria-label={`Add card to ${col}`}>+</button>

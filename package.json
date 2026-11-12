@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "test:watch": "bun --bun vitest",
     "test:e2e": "playwright test",
-    "test:all": "bun run typecheck && bun run test && bun run test:e2e"
+    "test:all": "bun run typecheck && bun run test && bun run test:e2e",
+    "demo:video": "bun scripts/workday.ts"
   },
   "dependencies": {
     "@animateicons/react": "^0.13.0",

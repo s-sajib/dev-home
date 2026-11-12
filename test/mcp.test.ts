@@ -125,7 +125,7 @@ describe("writes and guard rails", () => {
     const on = await connect({ MCP_ALLOW_WRITES: "x" }); // env var is not a setting: still blocked
     expect((await on.tool("jira_comment", { itemKey: "ticket:PAY-231", text: "hi", confirm: true })).text).toContain("not allowed");
   });
-  test("when the user enables Jira writes the gate opens (and Jira itself must still be configured)", async () => {
+  test("when the user enables Jira writes the gate opens (demo mode simulates the write)", async () => {
     const { client } = await connect();
     expect(client).toBeTruthy();
     const cfg = loadConfig({ WORK_INBOX_DEMO: "1" });
@@ -136,6 +136,6 @@ describe("writes and guard rails", () => {
     await mgr.set("mcpAllowWrites", true);
     const api = createApi({ db, cfg, adapters: [], run: demoRunner, settings: mgr });
     const r = await api(new Request("http://127.0.0.1/api/items/ticket:PAY-231/comment", { method: "POST", headers: { "x-client": "mcp" }, body: JSON.stringify({ text: "hi", confirm: true }) }));
-    expect((await r!.json() as any).error).toContain("Jira not configured"); // passed the Claude Code gate, stopped by missing Jira
+    expect(((await r!.json()) as any).result).toBe("commented on PAY-231"); // passed the Claude Code gate; demo mode simulates the Jira write locally
   });
 });

@@ -77,7 +77,7 @@ const it_isChat = (k: string) => k.startsWith("chat:");
 export function listItems(db: DB, now: number): InboxItem[] {
   const rows = db
     .query(
-      `SELECT i.*, s.dismissed_at_activity, s.snoozed_until FROM items i LEFT JOIN state s ON s.item_key = i.item_key`,
+      `SELECT i.*, s.dismissed_at_activity, s.snoozed_until, s.last_seen_activity FROM items i LEFT JOIN state s ON s.item_key = i.item_key`,
     )
     .all() as any[];
   const events = visibleEvents(loadEvents(db));
@@ -103,6 +103,7 @@ export function listItems(db: DB, now: number): InboxItem[] {
       reason: r.reason,
       hidden: dismissed || snoozed || flags.length === 0,
       snoozedUntil: snoozed ? r.snoozed_until : null,
+      accepted: r.last_seen_activity != null && r.last_seen_activity >= r.last_activity,
       events: (byItem.get(r.item_key) ?? [])
         .filter((e) => e.body)
         .map((e) => ({
@@ -145,4 +146,15 @@ export function snoozeItem(db: DB, itemKey: string, until: number) {
 
 export function restoreItem(db: DB, itemKey: string) {
   db.query("DELETE FROM state WHERE item_key = ?").run(itemKey);
+}
+
+/** "Accept": I have seen this and agree it needs me. Shown as a check until something new happens on it. */
+export function acceptItem(db: DB, itemKey: string) {
+  const row = db.query("SELECT last_activity FROM items WHERE item_key = ?").get(itemKey) as { last_activity: number } | null;
+  if (!row) return false;
+  db.query(
+    `INSERT INTO state (item_key, last_seen_activity) VALUES (?, ?)
+     ON CONFLICT (item_key) DO UPDATE SET last_seen_activity = excluded.last_seen_activity`,
+  ).run(itemKey, row.last_activity);
+  return true;
 }
