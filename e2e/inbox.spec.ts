@@ -71,3 +71,15 @@ test("settings has the same toolbar as the other screens", async ({ page }) => {
   await page.keyboard.press(",");
   await expect(page.locator(".topbar h1")).toHaveText("Settings");
 });
+
+test("losing the connection shows a banner, keeps the last data, and reconnects by itself", async ({ page }) => {
+  const rows = await page.locator("[data-testid=list] .row").count();
+  await page.route("**/api/**", (r) => r.abort("connectionrefused"));
+  await page.keyboard.press("g"); // a refresh while offline
+  await expect(page.locator(".conn")).toBeVisible({ timeout: 8000 });
+  expect(await page.locator("[data-testid=list] .row").count()).toBe(rows); // still showing what it had
+  await page.keyboard.press("d"); // an action while offline fails loudly, not silently
+  await expect(page.locator(".toast.err")).toContainText("Can't reach the app");
+  await page.unroute("**/api/**");
+  await expect(page.locator(".conn")).toHaveCount(0, { timeout: 20_000 }); // backoff retry finds it again
+});

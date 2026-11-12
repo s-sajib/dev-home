@@ -9,6 +9,6 @@ while (!stopping) {
   child = Bun.spawn(cmd, { stdout: "inherit", stderr: "inherit", env: process.env });
   const code = await child.exited;
   if (stopping) break;
-  console.log(`[supervise] exited with ${code}, restarting in 700ms`);
-  await new Promise((r) => setTimeout(r, 700));
+  console.log(`[supervise] exited with ${code}, restarting`);
+  await new Promise((r) => setTimeout(r, Number(process.env.SUPERVISE_DELAY_MS ?? 700)));
 }

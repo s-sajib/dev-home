@@ -251,4 +251,24 @@ kbd { font: 500 10.5px var(--font-mono); background: var(--fill); box-shadow: in
 .keyrow button { background: var(--btn); border: 0; border-radius: 7px; min-width: 84px; padding: 3px 8px; box-shadow: var(--shadow-1); } .keyrow button.on { box-shadow: 0 0 0 2px var(--accent); }
 .presets { display: flex; gap: 8px; margin: 0 0 8px; flex-wrap: wrap; }
 
+/* ───────── Narrow windows: the sidebar becomes icons, the split becomes a stack ───────── */
+@media (max-width: 1000px) {
+  .shell { grid-template-columns: 56px 1fr; }
+  .rail { padding: 14px 6px; align-items: stretch; }
+  .brand { justify-content: center; padding: 2px 0 18px; } .brandname, .brand small, .navlabel, .nav .n, .healthtxt { display: none; }
+  .nav { justify-content: center; padding: 0; } .health, .hint { justify-content: center; padding: 6px 0; }
+  .topbar { padding: 0 14px; } .topbar .sub { display: none; }
+  .split { grid-template-columns: minmax(280px, 340px) 1fr; }
+  .detail { padding: 14px 16px 40px 14px; }
+}
+@media (max-width: 860px) {
+  .split { grid-template-columns: 1fr; grid-template-rows: minmax(150px, 38%) 1fr; }
+  .list { padding: 0 8px 10px 8px; border-bottom: .5px solid var(--hair); }
+  .detail { padding: 12px 14px 32px 14px; }
+  .settings { grid-template-columns: 1fr; padding-left: 0; } .snav { flex-direction: row; overflow-x: auto; padding: 10px 14px; } .snav .close { margin-top: 0; margin-left: auto; white-space: nowrap; } .sbody { padding: 8px 14px 60px; }
+  .keygrid, .checks { grid-template-columns: 1fr; }
+  .drawer { width: 100vw; top: 0; right: 0; bottom: 0; border-radius: 0; }
+  .sheet { min-width: 0; width: calc(100vw - 24px); }
+  .board { padding: 12px 12px 18px; } .col { flex-basis: 232px; }
+}
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

@@ -5,6 +5,7 @@ import { Board, type BoardCard, type BoardData } from "./Board";
 import { Chat, type Item, type LlmMode } from "./Chat";
 import { SOURCE_LABEL, VERDICT_LABEL, ago, buildGroups } from "./format";
 import { Glyph, KIND_LABEL, Lamp, ObjectRow, Verbs, kindOf, related, urlsOf, verbsFor, why, type Ops } from "./objects";
+import { call, useConn } from "./net";
 import { selection } from "./selection";
 import { Settings } from "./Settings";
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
@@ -17,6 +18,7 @@ interface InboxResponse {
   transitions: string[];
   ui: { refreshSeconds: number; grouping: "auto" | "verdict" | "lane"; snoozeHours: number; remindHours: number; summaryPresets: number[]; summaryDefault: number; keys: Keymap; theme: "system" | "dark" | "light" };
   demo: boolean;
+  harsh?: boolean;
 }
 type View = "inbox" | "board" | "settings";
 type Modal = { kind: "transition"; item: Item; picked: string | null } | { kind: "comment"; item: Item; text: string } | { kind: "help" } | null;
@@ -39,8 +41,20 @@ export function App() {
   const [doneKey, setDoneKey] = useState<string | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
-  const load = useCallback(async () => setData(await (await fetch("/api/inbox")).json()), []);
-  const loadBoard = useCallback(async () => setBoard(await (await fetch("/api/board")).json()), []);
+  const conn = useConn();
+  const load = useCallback(async () => { const r = await call("GET", "/api/inbox"); if (r.ok) setData(r.data); }, []);
+  const loadBoard = useCallback(async () => { const r = await call("GET", "/api/board"); if (r.ok) setBoard(r.data); }, []);
+  // while the app is unreachable, retry with backoff (1.5s, 3s, 6s ... 15s) instead of waiting for the next poll
+  useEffect(() => {
+    if (conn.ok) return;
+    const t = setTimeout(() => { load(); loadBoard(); }, Math.min(15_000, 1500 * 2 ** Math.min(conn.failures, 4)));
+    return () => clearTimeout(t);
+  }, [conn.ok, conn.failures, load, loadBoard]);
+  useEffect(() => {
+    const wake = () => { load(); loadBoard(); };
+    addEventListener("online", wake); document.addEventListener("visibilitychange", wake);
+    return () => { removeEventListener("online", wake); document.removeEventListener("visibilitychange", wake); };
+  }, [load, loadBoard]);
   const refreshMs = (data?.ui.refreshSeconds ?? 30) * 1000;
   useEffect(() => {
     load(); loadBoard();
@@ -72,8 +86,10 @@ export function App() {
     window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), opts.error ? 9000 : 6000);
   };
-  const post = async (key: string, action: string, body: object = {}) =>
-    (await (await fetch(`/api/items/${encodeURIComponent(key)}/${action}`, json("POST", body))).json()) as { ok: boolean; error?: string; [k: string]: any };
+  const post = async (key: string, action: string, body: object = {}) => {
+    const r = await call("POST", `/api/items/${encodeURIComponent(key)}/${action}`, body, action === "summarize" || action === "draft" ? 30_000 : 8000);
+    return { ...r.data, ok: r.ok, error: r.error } as { ok: boolean; error?: string; [k: string]: any };
+  };
   const move = (delta: number) => setSelKey(flat[Math.max(0, Math.min(flat.length - 1, idx + delta))]?.itemKey ?? null);
 
   /** One way to act on any object, whether it is selected in the inbox, open in the drawer or a relationship. */
@@ -104,7 +120,8 @@ export function App() {
     if (r?.summary) say(`Summary ready (last ${r.summary.n} messages).`);
   };
   const setDefaultN = async (n: number) => {
-    await fetch("/api/settings", json("POST", { changes: { summaryDefault: n } }));
+    const r = await call("POST", "/api/settings", { changes: { summaryDefault: n } });
+    if (!r.ok) return say(r.error ?? "Could not save", { error: true });
     say(`Default is now ${n} messages.`);
     await load();
   };
@@ -136,16 +153,16 @@ export function App() {
     return null;
   };
   const moveCardTo = async (id: number, col: string, index?: number) => {
-    const r = await (await fetch(`/api/board/cards/${id}`, json("PATCH", { col, index }))).json();
+    const r = await call("PATCH", `/api/board/cards/${id}`, { col, index });
     if (!r.ok) say(r.error ?? "Could not move the card", { error: true });
     await loadBoard();
   };
   const addCardTo = async (col: string, title: string) => {
-    const r = await (await fetch("/api/board/cards", json("POST", { title, col }))).json();
+    const r = await call("POST", "/api/board/cards", { title, col });
     if (!r.ok) return say(r.error ?? "Could not add the card", { error: true });
     say(`Added to ${col}.`);
     await loadBoard();
-    setCardSel(r.id);
+    setCardSel(r.data.id);
   };
   const selCard: BoardCard | undefined = board?.cards.find((c) => c.id === cardSel) ?? (cols.flat()[0] as BoardCard | undefined);
   const goTo = (key: string) => { setDrawer(null); setView("inbox"); setSelKey(key); };
@@ -183,7 +200,7 @@ export function App() {
       if (a === "settings") return setView("settings");
       if (a === "help") return setModal({ kind: "help" });
       if (a === "undo") { if (toast?.undo) { toast.undo(); setToast(null); } return; }
-      if (a === "refresh") { fetch("/api/poll", json("POST")).then(() => { load(); loadBoard(); }); say("Refreshing…"); return; }
+      if (a === "refresh") { call("POST", "/api/poll", undefined, 30_000).then(() => { load(); loadBoard(); }); say("Refreshing…"); return; }
 
       if (view === "board") {
         const [ci, i] = cardPos(selCard?.id ?? null) ?? [0, 0];
@@ -209,7 +226,7 @@ export function App() {
         case "snooze": ops?.snooze(); break;
         case "accept": act("accept", {}, "Accepted."); break;
         case "open": if (current?.url) ops?.open(current.url); break;
-        case "judge": say("Judging…"); fetch("/api/judge", json("POST")).then((r) => r.json()).then((r) => { say(r.ok ? `Judged ${r.judged} item(s).` : r.error, { error: !r.ok }); load(); }); break;
+        case "judge": say("Judging…"); call("POST", "/api/judge", undefined, 60_000).then((r) => { say(r.ok ? `Judged ${r.data.judged} item(s).` : r.error ?? "Could not judge", { error: !r.ok }); load(); }); break;
         case "group": setGrouping(mode === "verdict" ? "lane" : "verdict"); break;
         case "remind": ops?.remind(); break;
         case "complete": ops?.complete(); break;
@@ -261,7 +278,7 @@ export function App() {
     <UiProvider>
     <div className="shell">
       <aside className="rail">
-        <div className="brand"><i />Work Inbox{data.demo && <small>demo</small>}</div>
+        <div className="brand"><i /><span className="brandname">Work Inbox</span>{data.demo && <small>{data.harsh ? "harsh" : "demo"}</small>}</div>
         <LayoutGroup id="nav">
           <NavButton icon={InboxIcon} label="Inbox" count={flat.length} on={view === "inbox"} onClick={() => setView("inbox")} />
           <NavButton icon={KanbanIcon} label="Board" count={board?.cards.length ?? 0} on={view === "board"} onClick={() => setView("board")} />
@@ -269,9 +286,9 @@ export function App() {
         </LayoutGroup>
         <div className="spacer" />
         <button className={`health ${down.length ? "bad" : ""}`} onClick={() => setView("settings")} title={data.statuses.map((s) => `${SOURCE_LABEL[s.source]}: ${s.ok && !s.banner ? "ok" : s.banner ?? s.error}`).join("\n")}>
-          <i />{down.length ? `${down.map((s) => SOURCE_LABEL[s.source]).join(", ")} down` : "all sources live"}
+          <i /><span className="healthtxt">{down.length ? `${down.map((s) => SOURCE_LABEL[s.source]).join(", ")} down` : "all sources live"}</span>
         </button>
-        <div className="hint"><kbd>{keys.help}</kbd> keys</div>
+        <div className="hint"><kbd>{keys.help}</kbd><span className="healthtxt"> keys</span></div>
       </aside>
 
       <div className="main">
@@ -280,6 +297,9 @@ export function App() {
           <span className="sub">{view === "settings" ? "changes save instantly · tokens go to the Keychain" : today}{view === "inbox" && data.hiddenCount ? ` · ${data.hiddenCount} hidden` : ""}</span>
           {view === "board" && <div className="actions"><NewCardButton onClick={() => setAdding(board?.columns[0] ?? null)} /></div>}
         </div>
+        {!conn.ok && (
+          <div className="banner conn" role="alert"><b>Can't reach the app.</b> Showing what I had from {ago(conn.lastOk, Date.now())}. Reconnecting automatically{conn.failures > 1 ? ` (attempt ${conn.failures})` : ""}. <button className="link" onClick={() => { load(); loadBoard(); }}>Retry now</button></div>
+        )}
         {view !== "settings" && down.map((s) => (
           <div key={s.source} className="banner"><b>{SOURCE_LABEL[s.source]}:</b> {s.banner ?? s.error ?? "problem"}{!s.banner && " Items from this source may be missing, not absent."}</div>
         ))}
@@ -315,8 +335,8 @@ export function App() {
       <Drawer open={!!drawerCard} onClose={() => setDrawer(null)} title={drawerCard?.title ?? "Card"}>
         {drawerCard && (
           <CardDrawer card={drawerCard} item={data.items.find((i) => i.itemKey === drawerCard.itemKey)} now={data.now} keys={keys} ops={(i) => opsFor(i)} relatedNode={relatedNode}
-            onSave={async (patch) => { await fetch(`/api/board/cards/${drawerCard.id}`, json("PATCH", patch)); await loadBoard(); }}
-            onDelete={async () => { await fetch(`/api/board/cards/${drawerCard.id}`, json("DELETE")); setDrawer(null); await loadBoard(); say("Card removed."); }} />
+            onSave={async (patch) => { const r = await call("PATCH", `/api/board/cards/${drawerCard.id}`, patch); if (!r.ok) say(r.error ?? "Could not save", { error: true }); await loadBoard(); }}
+            onDelete={async () => { const r = await call("DELETE", `/api/board/cards/${drawerCard.id}`); if (!r.ok) return say(r.error ?? "Could not remove", { error: true }); setDrawer(null); await loadBoard(); say("Card removed."); }} />
         )}
       </Drawer>
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ACTIONS, type ActionId, type Keymap } from "../shared/keys";
+import { call } from "./net";
 import { Toggle } from "./ui";
 
 type Source = "default" | "env" | "saved";
@@ -32,7 +33,7 @@ export function Settings({ onClose, onChanged }: { onClose: () => void; onChange
   const [saved, setSaved] = useState<string | null>(null);
   const [tests, setTests] = useState<Record<string, Test>>({});
 
-  const load = useCallback(async () => setData(await (await fetch("/api/settings")).json()), []);
+  const load = useCallback(async () => { const r = await call("GET", "/api/settings"); if (r.ok) setData(r.data); }, []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -43,8 +44,8 @@ export function Settings({ onClose, onChanged }: { onClose: () => void; onChange
   }, [onClose]);
 
   const save = async (key: string, value: unknown) => {
-    const res = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ changes: { [key]: value } }) });
-    const j = await res.json();
+    const res = await call("POST", "/api/settings", { changes: { [key]: value } });
+    const j = res.network || (res.status >= 500) ? { errors: { [key]: res.error ?? "Could not save" } } : res.data;
     setErrors((e) => ({ ...e, [key]: j.errors?.[key] ?? "" }));
     if (j.fields) setData({ groups: j.groups, fields: j.fields });
     if (!j.errors?.[key]) {
@@ -57,8 +58,8 @@ export function Settings({ onClose, onChanged }: { onClose: () => void; onChange
 
   const runTest = async (target: string) => {
     setTests((t) => ({ ...t, [target]: "running" }));
-    const r = await (await fetch("/api/settings/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target }) })).json();
-    setTests((t) => ({ ...t, [target]: r }));
+    const res = await call("POST", "/api/settings/test", { target }, 20_000);
+    setTests((t) => ({ ...t, [target]: res.network || res.status >= 500 ? { ok: false, message: res.error ?? "Test failed" } : res.data }));
   };
 
   if (!data) return <div className="loading">Loading settings…</div>;

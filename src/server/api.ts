@@ -185,6 +185,7 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
           theme: cfg.theme,
         },
         demo: cfg.demo,
+        harsh: cfg.harsh,
       });
     }
 

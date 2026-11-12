@@ -54,11 +54,12 @@ test.describe("volume", () => {
     await page.keyboard.press("2");
     await page.waitForSelector(".card");
     expect(await page.locator(".card").count()).toBeGreaterThan(120);
+    const merged = page.locator(".col[data-col='Merged'] .card");
+    const before = await merged.count();
     const card = page.locator(".col[data-col='To Do'] .card").first();
-    const title = await card.innerText();
     const t0 = Date.now();
     await card.dragTo(page.locator(".col[data-col='Merged'] .cards"));
-    await expect(page.locator(".col[data-col='Merged']")).toContainText(title.split("\n")[0]!.slice(0, 20));
+    await expect(merged).toHaveCount(before + 1, { timeout: 6000 });
     expect(Date.now() - t0).toBeLessThan(4000);
     expect(errors).toEqual([]);
   });
@@ -134,8 +135,13 @@ test.describe("failing world", () => {
     await page.keyboard.press("d"); // an action that must survive the crash (file-backed database)
     await expect(list(page)).toHaveCount(before - 1, { timeout: 10_000 });
     await request.post("/api/demo/crash").catch(() => undefined);
+    await page.waitForTimeout(500);
+    await page.keyboard.press("g"); // the user keeps working while the server is down
     await expect(page.locator(".conn")).toBeVisible({ timeout: 20_000 }); // "can't reach the app" banner
-    await expect(page.locator(".conn")).toHaveCount(0, { timeout: 40_000 }); // supervisor restarted it
+    await page.keyboard.press("j");
+    await page.keyboard.press("a"); // an action during the outage fails loudly
+    await expect(page.locator(".toast.err")).toContainText("Can't reach the app");
+    await expect(page.locator(".conn")).toHaveCount(0, { timeout: 40_000 }); // supervisor restarted it, the app reconnected by itself
     await expect(list(page)).toHaveCount(before - 1, { timeout: 20_000 }); // the dismissal persisted
     expect(errors).toEqual([]);
   });
@@ -167,6 +173,8 @@ test.describe("hostile user", () => {
       await expect(page.locator(".detail")).toBeVisible();
       const box = await page.locator(".detail").boundingBox();
       expect(box!.width).toBeGreaterThan(280);
+      const listBox = await page.locator("[data-testid=list]").boundingBox();
+      expect(listBox!.width).toBeGreaterThan(240);
     });
   }
 });

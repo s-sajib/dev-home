@@ -12,7 +12,7 @@ export default defineConfig({
   use: { baseURL: `http://127.0.0.1:${PORT}`, trace: "off", ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
   webServer: {
     command: "rm -f data/harsh-e2e.db data/harsh-e2e.db-shm data/harsh-e2e.db-wal && bun scripts/supervise.ts bun src/server/index.ts",
-    env: { WORK_INBOX_DEMO: "harsh", PORT: String(PORT), WORK_INBOX_DB: "data/harsh-e2e.db" },
+    env: { WORK_INBOX_DEMO: "harsh", PORT: String(PORT), WORK_INBOX_DB: "data/harsh-e2e.db", SUPERVISE_DELAY_MS: "6000" },
     url: `http://127.0.0.1:${PORT}/api/demo/ping`,
     reuseExistingServer: false,
     timeout: 90_000,
