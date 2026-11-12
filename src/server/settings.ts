@@ -211,7 +211,8 @@ export function buildConfig(env: Record<string, string | undefined>, saved: Reco
 
   const config: Config = {
     dbPath: env.WORK_INBOX_DB ?? "data/work-inbox.db",
-    demo: env.WORK_INBOX_DEMO === "1",
+    demo: env.WORK_INBOX_DEMO === "1" || env.WORK_INBOX_DEMO === "harsh",
+    harsh: env.WORK_INBOX_DEMO === "harsh",
     port: v.port,
     host: v.host,
     pollIntervalMs: v.pollMinutes * 60_000,
@@ -294,9 +295,8 @@ export class ConfigManager {
   }
 
   private apply() {
-    const demo = this.cfg.demo;
-    const dbPath = this.cfg.dbPath;
-    Object.assign(this.cfg, buildConfig(this.env, this.saved(), this.secrets).config, { demo, dbPath });
+    const { demo, harsh, dbPath } = this.cfg;
+    Object.assign(this.cfg, buildConfig(this.env, this.saved(), this.secrets).config, { demo, harsh, dbPath });
     configureRuntime({ ignoreAuthors: this.cfg.ignoreAuthors, disabledFlags: this.cfg.disabledFlags, chatDefaultMode: this.cfg.chatDefaultMode });
   }
 

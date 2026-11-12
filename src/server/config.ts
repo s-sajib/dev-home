@@ -24,6 +24,8 @@ export interface Config {
   port: number;
   host: string;
   demo: boolean;
+  /** Stress mode: huge hostile dataset, failing sources, fault injection (implies demo) */
+  harsh: boolean;
 
   // timing & rules
   pollIntervalMs: number;

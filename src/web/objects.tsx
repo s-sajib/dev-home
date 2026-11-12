@@ -1,8 +1,9 @@
 import { motion } from "motion/react";
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
+import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import type { Keymap } from "../shared/keys";
 import type { Item } from "./Chat";
 import { FLAG_LABEL, VERDICT_LABEL, ago, flagTone, sortFlags, type Tone } from "./format";
+import { useIsSelected } from "./selection";
 import { AlarmClockIcon, ArrowUpRightIcon, CheckIcon, CircleCheckIcon, GitPullRequestIcon, MessageCircleIcon, StickyNoteIcon, TicketIcon, useIconHover, type IconHandle } from "./icons";
 import { Tip } from "./ui";
 
@@ -67,17 +68,23 @@ export function related(item: Item, all: Item[]): Item[] {
   return all.filter((o) => o.itemKey !== item.itemKey && (o.ticketKey === tk || o.itemKey === `ticket:${tk}`));
 }
 
-/** Compact representation, used in lists and as a relationship link. The selection pill slides between rows (shared layout). */
-export function ObjectRow({ item, now, selected, index = 0, onClick, detail, done }: { item: Item; now: number; selected?: boolean; index?: number; onClick: () => void; detail: "reason" | "why"; done?: boolean }) {
+/**
+ * Compact representation, used in lists and as a relationship link. Memoised: with hundreds of rows only the two whose
+ * `selected` flag changed re-render on a keypress. The selection pill slides between rows (shared layout) and siblings
+ * glide up when a row leaves, but only while the list is small enough for layout animation to be cheap.
+ */
+export const ObjectRow = memo(function ObjectRow({ item, now, selected, index = 0, onSelect, detail, done, animateLayout = true }: { item: Item; now: number; selected?: boolean; index?: number; onSelect: (key: string) => void; detail: "reason" | "why"; done?: boolean; animateLayout?: boolean }) {
   const w = why(item);
   const line = detail === "reason" && item.reason ? item.reason : w?.text;
   const kind = kindOf(item.itemKey);
   const hover = useIconHover();
+  const storeSelected = useIsSelected(item.itemKey);
+  selected = selected ?? storeSelected;
   return (
     <motion.button
-      layout="position" className={`row ${selected ? "selected" : ""} ${item.accepted ? "accepted" : ""}`} data-key={item.itemKey} onClick={onClick} {...hover.triggerProps}
+      layout={animateLayout ? "position" : false} className={`row ${selected ? "selected" : ""} ${item.accepted ? "accepted" : ""}`} data-key={item.itemKey} onClick={() => onSelect(item.itemKey)} {...hover.triggerProps}
       variants={{ hidden: { opacity: 0, y: 6 }, rest: { opacity: 1, y: 0, x: 0, transition: { delay: Math.min(index, 14) * 0.03 } } }}
-      initial="hidden" animate="rest" exit={{ opacity: 0, x: -14, transition: { duration: 0.2 } }}
+      initial={index < 24 ? "hidden" : false} animate="rest" exit={{ opacity: 0, x: -14, transition: { duration: 0.2 } }}
     >
       {selected && <motion.span layoutId="rowsel" className="rowsel" transition={{ type: "spring", stiffness: 520, damping: 42 }} />}
       <Glyph ref={hover.ref} kind={kind} live={kind === "reminder" && item.flags.includes("overdue_reminder")} done={done} />
@@ -88,7 +95,7 @@ export function ObjectRow({ item, now, selected, index = 0, onClick, detail, don
       <span className="when">{ago(item.lastActivity, now)}</span>
     </motion.button>
   );
-}
+});
 
 export interface Verb { id: string; label: string; key?: string; primary?: boolean; onClick: () => void; hidden?: boolean; icon?: (p: { ref: React.Ref<IconHandle> }) => ReactNode }
 

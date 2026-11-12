@@ -83,6 +83,14 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
     const path = url.pathname.slice(4);
     const method = req.method;
 
+    if (method === "GET" && path === "/demo/ping") return json({ ok: true });
+
+    // stress mode only: die like a crash would, so recovery can be tested
+    if (method === "POST" && path === "/demo/crash" && cfg.harsh) {
+      setTimeout(() => process.exit(137), 50);
+      return json({ ok: true, crashing: true });
+    }
+
     // demo mode only: put the made-up data back exactly as it started (used by the end-to-end tests)
     if (method === "POST" && path === "/demo/reset" && cfg.demo) {
       db.transaction(() => {

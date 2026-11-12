@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ACTIONS, type ActionId, type Keymap } from "../shared/keys";
 import type { SourceStatus } from "../server/types";
 import { Board, type BoardCard, type BoardData } from "./Board";
 import { Chat, type Item, type LlmMode } from "./Chat";
 import { SOURCE_LABEL, VERDICT_LABEL, ago, buildGroups } from "./format";
 import { Glyph, KIND_LABEL, Lamp, ObjectRow, Verbs, kindOf, related, urlsOf, verbsFor, why, type Ops } from "./objects";
+import { selection } from "./selection";
 import { Settings } from "./Settings";
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { InboxIcon, KanbanIcon, PlusIcon, SettingsIcon, useIconHover } from "./icons";
@@ -59,6 +60,7 @@ export function App() {
   const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
   const idx = Math.max(0, flat.findIndex((i) => i.itemKey === selKey));
   const current: Item | undefined = flat[idx];
+  useLayoutEffect(() => selection.set(current?.itemKey ?? null), [current?.itemKey]);
 
   useEffect(() => {
     const want = new URLSearchParams(location.search).get("item");
@@ -249,7 +251,7 @@ export function App() {
     return (
       <section className="section rel">
         <h4>Related</h4>
-        {rel.map((o) => <ObjectRow key={o.itemKey} item={o} now={data.now} detail="why" onClick={() => goTo(o.itemKey)} />)}
+        {rel.map((o) => <ObjectRow key={o.itemKey} item={o} now={data.now} detail="why" selected={false} animateLayout={false} onSelect={goTo} />)}
         {card && <div className="why" style={{ padding: "6px 0 0" }}>On the board · <b style={{ fontWeight: 560 }}>{card.col}</b></div>}
       </section>
     );
@@ -288,17 +290,7 @@ export function App() {
           <div className="split">
             <div className="list" data-testid="list">
               {flat.length === 0 && <div className="empty">Nothing needs you right now.</div>}
-              {groups.map((g) => {
-                let n = 0;
-                return (
-                  <section key={g.id} className="group">
-                    <h2>{g.title} <em>{g.items.length}</em></h2>
-                    <AnimatePresence mode="popLayout">
-                      {g.items.map((it) => <ObjectRow key={it.itemKey} item={it} now={data.now} index={n++} selected={it.itemKey === current?.itemKey} detail={mode === "verdict" ? "reason" : "why"} done={doneKey === it.itemKey} onClick={() => setSelKey(it.itemKey)} />)}
-                    </AnimatePresence>
-                  </section>
-                );
-              })}
+              <InboxGroups groups={groups} now={data.now} mode={mode} doneKey={doneKey} animateLayout={flat.length <= 80} onSelect={setSelKey} />
             </div>
             <aside className={`detail ${current?.itemKey.startsWith("chat:") ? "chatmode" : ""}`}>
               {!current ? <div className="empty">Select an item</div> : current.itemKey.startsWith("chat:") ? (
@@ -362,6 +354,24 @@ export function App() {
     </UiProvider>
   );
 }
+
+const InboxGroups = memo(function InboxGroups({ groups, now, mode, doneKey, animateLayout, onSelect }: { groups: ReturnType<typeof buildGroups<Item>>; now: number; mode: "verdict" | "lane"; doneKey: string | null; animateLayout: boolean; onSelect: (k: string) => void }) {
+  return (
+    <>
+      {groups.map((g) => {
+        let n = 0;
+        return (
+          <section key={g.id} className="group">
+            <h2>{g.title} <em>{g.items.length}</em></h2>
+            <AnimatePresence mode="popLayout">
+              {g.items.map((it) => <ObjectRow key={it.itemKey} item={it} now={now} index={n++} detail={mode === "verdict" ? "reason" : "why"} done={doneKey === it.itemKey} animateLayout={animateLayout} onSelect={onSelect} />)}
+            </AnimatePresence>
+          </section>
+        );
+      })}
+    </>
+  );
+});
 
 function Thread({ events, now }: { events: Item["events"]; now: number }) {
   return (

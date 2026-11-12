@@ -5,16 +5,18 @@
   "description": "Personal local-first inbox merging Jira, GitHub, WhatsApp and Apple Reminders",
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/server/index.ts",
+    "dev": "WORK_INBOX_DEV=1 bun --hot src/server/index.ts",
     "start": "bun src/server/index.ts",
-    "demo": "WORK_INBOX_DEMO=1 bun --hot src/server/index.ts",
+    "demo": "WORK_INBOX_DEMO=1 WORK_INBOX_DEV=1 bun --hot src/server/index.ts",
     "poll": "bun src/server/poll-once.ts",
     "test": "bun --bun vitest run",
     "typecheck": "tsc --noEmit",
     "test:watch": "bun --bun vitest",
     "test:e2e": "playwright test",
     "test:all": "bun run typecheck && bun run test && bun run test:e2e",
-    "demo:video": "bun scripts/workday.ts"
+    "demo:video": "bun scripts/workday.ts",
+    "test:harsh": "playwright test -c playwright.harsh.config.ts",
+    "demo:harsh": "rm -f data/harsh.db* && WORK_INBOX_DEMO=harsh bun scripts/supervise.ts bun src/server/index.ts"
   },
   "dependencies": {
     "@animateicons/react": "^0.13.0",
