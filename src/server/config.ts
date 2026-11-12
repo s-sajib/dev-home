@@ -62,10 +62,19 @@ export interface Config {
   remindHours: number;
   keys: Keymap;
 
+  // board
+  boardColumns: string[];
+  /** "Jira status = Column" lines */
+  boardStatusMap: string[];
+  boardIntake: string;
+  boardIncludeReviews: boolean;
+  mcpAllowWrites: boolean;
+  theme: "system" | "dark" | "light";
+
   // sources
   jira: { baseUrl: string; email: string; token: string; lookbackDays: number; jql: string } | null;
   transitions: string[];
-  github: { token: string; username: string; bots: string[]; reviewRequests: boolean; myPrs: boolean; mentions: boolean } | null;
+  github: { token: string; username: string; bots: string[]; reviewRequests: boolean; myPrs: boolean; mentions: boolean; merged: boolean } | null;
   reminders: { list: string; enabled: boolean };
   whatsapp: WhatsappConfig | null;
 }

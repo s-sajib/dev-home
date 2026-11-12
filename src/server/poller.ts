@@ -1,11 +1,12 @@
 import type { Config } from "./config";
 import type { DB } from "./db";
+import { syncBoard } from "./board";
 import { rebuildItems } from "./inbox";
 import { upsertEvents } from "./store";
 import type { SourceAdapter, SourceStatus } from "./types";
 
 /** Deterministic fetch: every configured adapter, fixed queries, errors recorded per source (never silent). */
-export async function pollOnce(db: DB, adapters: SourceAdapter[], cfg: Pick<Config, "staleDays" | "replyHours">) {
+export async function pollOnce(db: DB, adapters: SourceAdapter[], cfg: Pick<Config, "staleDays" | "replyHours"> & Partial<Pick<Config, "boardColumns" | "boardStatusMap" | "boardIntake" | "boardIncludeReviews">>) {
   const now = Date.now();
   for (const a of adapters) {
     if (!a.configured()) continue;
@@ -19,7 +20,9 @@ export async function pollOnce(db: DB, adapters: SourceAdapter[], cfg: Pick<Conf
       setStatus(db, { source: a.source, ok: false, lastPollAt: prev?.last_poll_at ?? null, error: String(err?.message ?? err), banner: null });
     }
   }
-  return rebuildItems(db, { now: Date.now(), staleDays: cfg.staleDays, replyHours: cfg.replyHours });
+  const items = rebuildItems(db, { now: Date.now(), staleDays: cfg.staleDays, replyHours: cfg.replyHours });
+  if (cfg.boardColumns && cfg.boardStatusMap && cfg.boardIntake !== undefined) syncBoard(db, cfg as Parameters<typeof syncBoard>[1]);
+  return items;
 }
 
 export function setStatus(db: DB, s: SourceStatus) {

@@ -11,6 +11,9 @@ export interface GithubDeps {
   reviewRequests?: boolean;
   myPrs?: boolean;
   mentions?: boolean;
+  /** Include my recently merged PRs (feeds the board's Merged column) */
+  merged?: boolean;
+  mergedDays?: number;
 }
 
 export function createGithubAdapter(deps: Maybe<GithubDeps>): SourceAdapter {
@@ -33,10 +36,14 @@ async function fetchGithub(d: GithubDeps): Promise<NormalizedEvent[]> {
   const u = d.username;
   const search = (q: string) => get(`/search/issues?q=${encodeURIComponent(`is:pr is:open ${q}:${u}`)}&per_page=30`);
   const none = Promise.resolve({ items: [] });
-  const [reviewing, mine, mentioned] = await Promise.all([
+  const since = new Date(Date.now() - (d.mergedDays ?? 14) * 86_400_000).toISOString().slice(0, 10);
+  const [reviewing, mine, mentioned, merged] = await Promise.all([
     d.reviewRequests === false ? none : search("review-requested"),
     d.myPrs === false ? none : search("author"),
     d.mentions === false ? none : search("mentions"),
+    d.merged === false || d.myPrs === false
+      ? none
+      : get(`/search/issues?q=${encodeURIComponent(`is:pr is:merged author:${u} merged:>=${since}`)}&per_page=30`),
   ]);
 
   const seen = new Map<string, { issue: any; reviewRequested: boolean; mine: boolean }>();
@@ -47,26 +54,30 @@ async function fetchGithub(d: GithubDeps): Promise<NormalizedEvent[]> {
   for (const i of reviewing.items ?? []) add(i, { reviewRequested: true });
   for (const i of mine.items ?? []) add(i, { mine: true });
   for (const i of mentioned.items ?? []) add(i, {});
+  const mergedUrls = new Set<string>((merged.items ?? []).map((i: any) => i.html_url));
+  for (const i of merged.items ?? []) add(i, { mine: true });
 
   const events: NormalizedEvent[] = [];
   for (const { issue, reviewRequested, mine: isMine } of seen.values()) {
     const repo = issue.repository_url.replace("https://api.github.com/repos/", "");
     const n = issue.number;
+    const isMerged = mergedUrls.has(issue.html_url);
     const pr = await get(`/repos/${repo}/pulls/${n}`).catch(() => null);
     const ticketKey = firstTicketKey(issue.title, pr?.head?.ref) ?? keyFromBranch(pr?.head?.ref);
     const nativeKey = `pr:${repo}#${n}`;
     const base = { source: "github" as const, nativeKey, ticketKey, title: `${issue.title} (${repo}#${n})`, url: issue.html_url };
 
     let failing = false;
-    if (isMine && pr?.head?.sha) {
+    if (isMine && !isMerged && pr?.head?.sha) {
       const checks = await get(`/repos/${repo}/commits/${pr.head.sha}/check-runs?per_page=50`).catch(() => null);
       failing = (checks?.check_runs ?? []).some((c: any) => ["failure", "timed_out", "cancelled"].includes(c.conclusion));
     }
     events.push({
       ...base, sourceId: `pr:${repo}#${n}`, kind: "pr", author: issue.user?.login ?? "", authorIsMe: isMine,
       body: "", ts: Date.parse(issue.updated_at) || Date.now(), mentionsMe: false,
-      meta: { mine: isMine, failingChecks: failing, draft: !!pr?.draft },
+      meta: { mine: isMine, failingChecks: failing, draft: !!pr?.draft, merged: isMerged },
     });
+    if (isMerged) continue; // merged PRs only feed the board; no comments or review flags
     if (reviewRequested) {
       events.push({
         ...base, sourceId: `rr:${repo}#${n}`, kind: "review_request", author: issue.user?.login ?? "", authorIsMe: false,

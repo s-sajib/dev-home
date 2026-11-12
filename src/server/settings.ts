@@ -1,6 +1,7 @@
 import { resolveKeymap, validateKeymap, DEFAULT_KEYMAP } from "../shared/keys";
 import type { Config } from "./config";
 import type { DB } from "./db";
+import { DEFAULT_STATUS_MAP, PIPELINE_A, PIPELINE_B } from "./board";
 import { configureRuntime } from "./runtime";
 import type { SecretStore } from "./secrets";
 import type { Flag } from "./types";
@@ -21,21 +22,30 @@ export interface Field {
   placeholder?: string;
   /** Takes effect after restarting the server */
   restart?: boolean;
+  /** One-click value sets shown as buttons (list fields) */
+  presets?: Record<string, unknown>;
 }
 
 export const FLAGS: Flag[] = ["mentions_me", "unanswered_comment", "review_requested", "stale", "status_changed_by_other", "needs_reply", "overdue_reminder", "assigned"];
 const IS_MAC = process.platform === "darwin";
 
-export const GROUPS = ["General", "Rules", "Nag & hours", "Jira", "GitHub", "WhatsApp", "Claude", "Reminders", "Keyboard", "Server"] as const;
+export const GROUPS = ["General", "Board", "Rules", "Nag & hours", "Jira", "GitHub", "WhatsApp", "Claude", "Reminders", "Claude Code", "Keyboard", "Server"] as const;
 
 export const FIELDS: Field[] = [
   // General
   { key: "pollMinutes", group: "General", label: "Poll interval (minutes)", help: "How often Jira, GitHub and Reminders are fetched.", type: "number", default: 5, min: 1, max: 1440, env: "POLL_MINUTES" },
+  { key: "theme", group: "General", label: "Theme", help: "System follows your Mac's light/dark setting.", type: "enum", options: ["system", "dark", "light"], default: "system" },
   { key: "uiRefreshSeconds", group: "General", label: "Screen refresh (seconds)", type: "number", default: 30, min: 5, max: 3600 },
   { key: "defaultGrouping", group: "General", label: "Default grouping", help: "Auto groups by Claude's verdict once any exist, otherwise by rule.", type: "enum", options: ["auto", "verdict", "lane"], default: "auto" },
   { key: "snoozeHours", group: "General", label: "Snooze length (hours)", type: "number", default: 4, min: 0.25, max: 720 },
   { key: "remindHours", group: "General", label: "New reminder due in (hours)", type: "number", default: 2, min: 0.1, max: 720 },
   { key: "purgeDays", group: "General", label: "Delete chat text older than (days)", help: "WhatsApp messages are purged from the local database after this.", type: "number", default: 90, min: 1, max: 3650 },
+
+  // Board
+  { key: "boardColumns", group: "Board", label: "Columns", help: "One per line, left to right. Pick a pipeline or write your own. Cards in a removed column show in the first one.", type: "list", default: PIPELINE_B, presets: { "Pipeline A (Stage, Prod)": PIPELINE_A, "Pipeline B (Stage, Ready for Release, Prod)": PIPELINE_B } },
+  { key: "boardStatusMap", group: "Board", label: "Jira status → column", help: "One per line as `Jira status = Column`. An open PR pulls a ticket to PR Review and a merged PR to Merged; Decision Needed always wins. Moving a card by hand pins it.", type: "list", default: DEFAULT_STATUS_MAP },
+  { key: "boardIntake", group: "Board", label: "Column for unmapped statuses", type: "text", default: "To Do" },
+  { key: "boardIncludeReviews", group: "Board", label: "Put PRs waiting for my review on the board", type: "bool", default: true },
 
   // Rules
   { key: "replyHours", group: "Rules", label: "Reply owed after (hours)", help: "A mention or quote you haven't answered becomes 'Reply owed' after this long.", type: "number", default: 4, min: 0.25, max: 168, env: "REPLY_HOURS" },
@@ -64,6 +74,7 @@ export const FIELDS: Field[] = [
   { key: "githubReviewRequests", group: "GitHub", label: "Include review requests", type: "bool", default: true },
   { key: "githubMyPrs", group: "GitHub", label: "Include my own PRs (comments, failing checks)", type: "bool", default: true },
   { key: "githubMentions", group: "GitHub", label: "Include PRs that mention me", type: "bool", default: true },
+  { key: "githubMerged", group: "GitHub", label: "Include my recently merged PRs", help: "Feeds the board's Merged column.", type: "bool", default: true },
   { key: "githubBots", group: "GitHub", label: "Ignore these bot accounts", help: "Accounts ending in [bot] are always ignored.", type: "list", default: ["dependabot", "github-actions", "renovate", "codecov"] },
 
   // WhatsApp
@@ -87,6 +98,9 @@ export const FIELDS: Field[] = [
   // Reminders
   { key: "remindersEnabled", group: "Reminders", label: "Use Apple Reminders", type: "bool", default: IS_MAC },
   { key: "remindersList", group: "Reminders", label: "Reminders list", type: "text", default: "Work Inbox", env: "REMINDERS_LIST" },
+
+  // Claude Code (MCP)
+  { key: "mcpAllowWrites", group: "Claude Code", label: "Let Claude Code write to Jira", help: "Off: Claude Code can read the inbox and board, move cards, and leave drafts. On: it may also transition tickets and comment (each call still needs confirm). It can never send WhatsApp messages.", type: "bool", default: false },
 
   // Keyboard
   { key: "keys", group: "Keyboard", label: "Keyboard shortcuts", type: "keys", default: DEFAULT_KEYMAP },
@@ -126,8 +140,14 @@ export function validate(f: Field, raw: unknown): unknown {
       if (typeof raw === "boolean") return raw;
       if (raw === "true" || raw === "false") return raw === "true";
       throw new Error(`${f.label}: must be on or off`);
-    case "list":
-      return splitList(raw).slice(0, 200);
+    case "list": {
+      const list = splitList(raw).slice(0, 200);
+      if (f.key === "boardColumns") {
+        if (list.length < 2) throw new Error(`${f.label}: need at least two columns`);
+        if (new Set(list.map((x) => x.toLowerCase())).size !== list.length) throw new Error(`${f.label}: column names must be unique`);
+      }
+      return list;
+    }
     case "numlist": {
       const nums = splitList(raw).map(Number);
       if (nums.length === 0) throw new Error(`${f.label}: needs at least one number`);
@@ -218,6 +238,12 @@ export function buildConfig(env: Record<string, string | undefined>, saved: Reco
     snoozeHours: v.snoozeHours,
     remindHours: v.remindHours,
     keys: resolveKeymap(v.keys),
+    boardColumns: v.boardColumns,
+    boardStatusMap: v.boardStatusMap,
+    boardIntake: v.boardIntake,
+    boardIncludeReviews: v.boardIncludeReviews,
+    mcpAllowWrites: v.mcpAllowWrites,
+    theme: v.theme,
     jira:
       v.jiraBaseUrl && v.jiraEmail && v.jiraToken
         ? { baseUrl: String(v.jiraBaseUrl).replace(/\/$/, ""), email: v.jiraEmail, token: v.jiraToken, lookbackDays: v.jiraLookbackDays, jql: v.jiraJql }
@@ -225,7 +251,7 @@ export function buildConfig(env: Record<string, string | undefined>, saved: Reco
     transitions: v.jiraTransitions,
     github:
       v.githubUsername && v.githubToken
-        ? { token: v.githubToken, username: v.githubUsername, bots: v.githubBots, reviewRequests: v.githubReviewRequests, myPrs: v.githubMyPrs, mentions: v.githubMentions }
+        ? { token: v.githubToken, username: v.githubUsername, bots: v.githubBots, reviewRequests: v.githubReviewRequests, myPrs: v.githubMyPrs, mentions: v.githubMentions, merged: v.githubMerged }
         : null,
     reminders: { list: v.remindersList || "Work Inbox", enabled: v.remindersEnabled },
     whatsapp: v.wahaUrl

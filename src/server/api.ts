@@ -10,12 +10,33 @@ import { backfillChat } from "./adapters/whatsapp";
 import { autoHandleChats, clampN, getMode, latestSummary, LLM_MODES, modesByItem, setMode, summarizeChat, summaryDefault, type LlmMode } from "./chatllm";
 import { testConnection, type Exec, type Target } from "./connect-test";
 import type { ConfigManager } from "./settings";
+import { addCard, getBoard, moveCard, removeCard, syncBoard, updateCard } from "./board";
 import { getStatuses, pollOnce } from "./poller";
 import { logAction } from "./store";
 import type { SourceAdapter } from "./types";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const safeEq = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
+/**
+ * The API is for this machine only. Browsers send Host and (for cross-site requests) Origin / Sec-Fetch-Site, so a
+ * malicious web page can neither read responses (Host check defeats DNS rebinding) nor drive writes (Origin check).
+ * Non-browser clients (Claude Code's MCP server, curl, tests) send neither and are allowed.
+ */
+export function guardRequest(req: Request, cfg: Pick<Config, "host" | "port">): Response | null {
+  const allowed = new Set([`127.0.0.1:${cfg.port}`, `localhost:${cfg.port}`, `[::1]:${cfg.port}`, `${cfg.host}:${cfg.port}`]);
+  const host = req.headers.get("host");
+  if (host && !allowed.has(host)) return json({ error: "forbidden host" }, 403);
+  const origin = req.headers.get("origin");
+  if (origin) {
+    let ok = false;
+    try { ok = allowed.has(new URL(origin).host); } catch { ok = false; }
+    if (!ok) return json({ error: "forbidden origin" }, 403);
+  }
+  const site = req.headers.get("sec-fetch-site");
+  if (site && !["same-origin", "none"].includes(site)) return json({ error: "cross-site request blocked" }, 403);
+  return null;
+}
 
 export interface ApiDeps {
   db: DB;
@@ -55,8 +76,47 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
     }
 
     if (!url.pathname.startsWith("/api/")) return null;
+    const blocked = guardRequest(req, cfg);
+    if (blocked) return blocked;
     const path = url.pathname.slice(4);
     const method = req.method;
+
+    // ---- work board ----
+    if (method === "GET" && path === "/board") {
+      syncBoard(db, cfg);
+      return json({ ...getBoard(db, cfg), statusMap: cfg.boardStatusMap });
+    }
+    if (method === "POST" && path === "/board/sync") return json({ ok: true, ...syncBoard(db, cfg) });
+    if (path === "/board/cards" && method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as any;
+      try {
+        const id = addCard(db, cfg, { title: String(b.title ?? ""), notes: b.notes, col: b.col });
+        logAction(db, null, "board-add", { title: b.title, col: b.col }, true, String(id));
+        return json({ ok: true, id });
+      } catch (e: any) {
+        return json({ ok: false, error: String(e?.message ?? e) }, 400);
+      }
+    }
+    const card = path.match(/^\/board\/cards\/(\d+)$/);
+    if (card && (method === "PATCH" || method === "DELETE")) {
+      const id = Number(card[1]);
+      try {
+        if (method === "DELETE") {
+          removeCard(db, id);
+          logAction(db, null, "board-remove", { id }, true, "removed");
+          return json({ ok: true });
+        }
+        const b = (await req.json().catch(() => ({}))) as any;
+        if (b.title !== undefined || b.notes !== undefined || b.pinned !== undefined) updateCard(db, id, { title: b.title, notes: b.notes, pinned: b.pinned });
+        if (b.col !== undefined) {
+          moveCard(db, cfg, id, String(b.col), b.index === undefined ? undefined : Number(b.index));
+          logAction(db, null, "board-move", { id, col: b.col, index: b.index }, true, "moved");
+        }
+        return json({ ok: true });
+      } catch (e: any) {
+        return json({ ok: false, error: String(e?.message ?? e) }, 400);
+      }
+    }
 
     if (method === "GET" && path === "/inbox") {
       const now = Date.now();
@@ -110,7 +170,8 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
           errors[k] = String(e?.message ?? e);
         }
       }
-      refresh(); // rule settings (reply hours, stale days, flags, ignored authors) apply to the inbox right away
+      refresh();
+      syncBoard(db, cfg); // rule settings (reply hours, stale days, flags, ignored authors) apply to the inbox right away
       return json({ ok: Object.keys(errors).length === 0, errors, ...settings.describe() }, Object.keys(errors).length ? 400 : 200);
     }
     if (method === "POST" && path === "/settings/test") {
@@ -128,7 +189,7 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
       }
     }
 
-    const m = path.match(/^\/items\/(.+)\/(dismiss|snooze|restore|accept|transition|comment|draft|remind|complete|summarize|llm-mode)$/);
+    const m = path.match(/^\/items\/(.+)\/(dismiss|snooze|restore|accept|transition|comment|draft|remind|complete|summarize|llm-mode|board)$/);
     if (method !== "POST" || !m) return json({ error: "not found" }, 404);
 
     const itemKey = decodeURIComponent(m[1]!);
@@ -153,6 +214,12 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
         else if (action === "snooze") snoozeItem(db, itemKey, Date.now() + Number(body.hours ?? cfg.snoozeHours) * 3_600_000);
         logAction(db, itemKey, action, body, true, "ok");
         return json({ ok: true });
+      }
+
+      if (action === "board") {
+        const id = addCard(db, cfg, { title: item.title, col: body.col, itemKey: item.itemKey, url: item.url, ticketKey: item.ticketKey });
+        logAction(db, itemKey, "board-add", { col: body.col }, true, String(id));
+        return json({ ok: true, id });
       }
 
       if (action === "llm-mode") {

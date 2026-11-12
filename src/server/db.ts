@@ -109,6 +109,22 @@ const MIGRATIONS: string[] = [
     value TEXT NOT NULL
   );
   `,
+  `
+  CREATE TABLE board_cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_key TEXT UNIQUE,
+    title TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    url TEXT,
+    ticket_key TEXT,
+    col TEXT NOT NULL,
+    pos REAL NOT NULL DEFAULT 0,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX board_col ON board_cards (col, pos);
+  `,
 ];
 
 export function openDb(path: string): DB {

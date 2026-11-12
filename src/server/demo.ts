@@ -1,5 +1,6 @@
 import type { Runner } from "./claude";
 import type { DB } from "./db";
+import { addCard, PIPELINE_B } from "./board";
 import { setMode } from "./chatllm";
 import { setStatus } from "./poller";
 import { upsertEvents } from "./store";
@@ -40,6 +41,17 @@ export function demoEvents(now: number): NormalizedEvent[] {
     { ...base, source: "whatsapp", sourceId: "m3", kind: "chat", nativeKey: "chat:120363@g.us", ticketKey: null, title: "Acme Support Group",
       author: "Tom (Acme)", body: "+1, we're seeing duplicates too", ts: now - 5.5 * H },
 
+    // Board: a merged ticket + manual cards further down the pipeline
+    { ...base, source: "jira", sourceId: "issue:DOC-12", kind: "ticket", nativeKey: "ticket:DOC-12", ticketKey: "DOC-12",
+      title: "DOC-12 Document webhook retry policy", author: "Lena Park", url: `${jira}/DOC-12`, ts: now - 6 * H,
+      meta: { status: "In Progress", statusCategory: "indeterminate", assignedToMe: true } },
+    { ...base, source: "github", sourceId: "pr:acme/docs#77", kind: "pr", nativeKey: "pr:acme/docs#77", ticketKey: "DOC-12",
+      title: "DOC-12 Retry policy page (acme/docs#77)", author: "me", authorIsMe: true, url: "https://github.com/acme/docs/pull/77", ts: now - 4 * H,
+      meta: { mine: true, merged: true } },
+    { ...base, source: "jira", sourceId: "issue:API-90", kind: "ticket", nativeKey: "ticket:API-90", ticketKey: "API-90",
+      title: "API-90 Rate-limit headers on /v2", author: "Sam Okafor", url: `${jira}/API-90`, ts: now - 30 * H,
+      meta: { status: "Backlog", statusCategory: "new", assignedToMe: true } },
+
     // 1:1 chat with a teammate, owed reply
     { ...base, source: "whatsapp", sourceId: "d1", kind: "chat", nativeKey: "chat:447700900007@c.us", ticketKey: null, title: "Lena Park",
       author: "Lena Park", mentionsMe: true, body: "Hey, can you review my pagination PR when you get a sec? I'm blocked on API-77 until it's merged.", ts: now - 5 * H },
@@ -75,7 +87,12 @@ export function demoEvents(now: number): NormalizedEvent[] {
 
 export function seedDemo(db: DB, now = Date.now()) {
   upsertEvents(db, demoEvents(now));
-  setMode(db, "chat:120363@g.us", "auto"); // the client group is fine to handle automatically in the demo
+  setMode(db, "chat:120363@g.us", "auto");
+  const at = (title: string, col: string, notes = "") => addCard(db, { boardColumns: PIPELINE_B, boardStatusMap: [], boardIntake: "To Do", boardIncludeReviews: true }, { title, col, notes }, now);
+  at("Stage smoke test for billing v2", "Deployed Stage", "Run the 12-step checklist before promoting.");
+  at("Release notes 4.12", "Ready for Release");
+  at("Hotfix: invoice rounding", "Deployed Prod");
+  at("Draft Q4 platform roadmap", "Pending", "Waiting on infra estimates."); // the client group is fine to handle automatically in the demo
   for (const s of ["jira", "github", "whatsapp", "reminders"] as const) {
     setStatus(db, { source: s, ok: true, lastPollAt: now - 90_000, error: null, banner: null });
   }
