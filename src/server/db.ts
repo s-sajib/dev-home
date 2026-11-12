@@ -79,6 +79,14 @@ const MIGRATIONS: string[] = [
     banner TEXT
   );
   `,
+  `
+  CREATE TABLE chats (
+    chat_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    is_group INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 export function openDb(path: string): DB {
