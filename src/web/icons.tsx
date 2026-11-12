@@ -8,6 +8,7 @@ export { AlarmClockIcon } from "@animateicons/react/lucide/alarm-clock-icon";
 export { ArrowUpRightIcon } from "@animateicons/react/lucide/arrow-up-right-icon";
 export { CheckIcon } from "@animateicons/react/lucide/check-icon";
 export { ChevronDownIcon } from "@animateicons/react/lucide/chevron-down-icon";
+export { CircleDotIcon } from "@animateicons/react/lucide/circle-dot-icon";
 export { CircleCheckIcon } from "@animateicons/react/lucide/circle-check-icon";
 export { CopyIcon } from "@animateicons/react/lucide/copy-icon";
 export { GitPullRequestIcon } from "@animateicons/react/lucide/git-pull-request-icon";

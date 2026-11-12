@@ -22,7 +22,9 @@ export function computeFlags(events: NormalizedEvent[], ctx: RuleContext): Flag[
   const others = events.filter((e) => !e.authorIsMe);
 
   const ticket = events.find((e) => e.kind === "ticket");
-  const assignedToMe = !!ticket && ticket.meta.assignedToMe === true;
+  const issue = events.find((e) => e.kind === "issue");
+  const openIssue = !!issue && issue.meta.assignedToMe === true && issue.meta.state !== "closed";
+  const assignedToMe = (!!ticket && ticket.meta.assignedToMe === true) || openIssue;
   if (assignedToMe) flags.add("assigned");
 
   // mentions me: someone else mentioned me after I last acted on this item
@@ -44,7 +46,7 @@ export function computeFlags(events: NormalizedEvent[], ctx: RuleContext): Flag[
 
   // stale: my assigned ticket without activity for N days
   const lastActivity = Math.max(...events.map((e) => e.ts));
-  if (assignedToMe && ticket!.meta.statusCategory !== "done" && ctx.now - lastActivity > ctx.staleDays * DAY) {
+  if (assignedToMe && ticket?.meta.statusCategory !== "done" && ctx.now - lastActivity > ctx.staleDays * DAY) {
     flags.add("stale");
   }
 

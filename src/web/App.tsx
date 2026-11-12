@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { ACTIONS, type ActionId, type Keymap } from "../shared/keys";
 import type { SourceStatus } from "../server/types";
 import { Board, type BoardCard, type BoardData } from "./Board";
-import { Chat, type Item, type LlmMode } from "./Chat";
+import { Chat, MakeCard, type Item, type LlmMode } from "./Chat";
 import { SOURCE_LABEL, VERDICT_LABEL, ago, buildGroups } from "./format";
 import { Glyph, KIND_LABEL, Lamp, ObjectRow, Verbs, kindOf, related, urlsOf, verbsFor, why, type Ops } from "./objects";
 import { call, useConn } from "./net";
@@ -132,6 +132,14 @@ export function App() {
     await post(current.itemKey, "llm-mode", { mode: m });
     say(m === "auto" ? "Auto: new activity in this chat is summarised and drafted for you (never sent)." : m === "never" ? "Never: this chat's text will not be sent to Claude." : "Manual: Claude only sees this chat when you press a key.");
     await load();
+  };
+  /** One verb for any message or comment: make it a board card that links back to where it came from. */
+  const makeCard = async (item: Item, eventId: string) => {
+    const r = await call("POST", `/api/items/${encodeURIComponent(item.itemKey)}/card-from-event`, { eventId });
+    if (!r.ok) return say(r.error ?? "Could not make a card", { error: true });
+    const id = r.data.id as number;
+    say("Card added to the board.", { undo: async () => { await call("DELETE", `/api/board/cards/${id}`); await loadBoard(); } });
+    await loadBoard();
   };
   const copy = async (text: string) => {
     try { await navigator.clipboard.writeText(text); say("Draft copied. Paste it into WhatsApp yourself; this tool never sends."); } catch { say("Copy failed", { error: true }); }
@@ -321,9 +329,9 @@ export function App() {
                     { id: "draft", label: "Draft reply", key: keys.draft, onClick: () => { say("Drafting…"); act("draft", {}).then((r) => r?.draft && say("Draft ready.")); } },
                     ...verbsFor(current, opsFor(current), keys, urlsOf(current)).filter((v) => ["board", "snooze", "dismiss"].includes(v.id)),
                   ]}
-                  relatedNode={relatedNode(current)} onCopy={copy} setN={setSumN} onSummarize={summarize} onDefault={setDefaultN} onMode={setMode} />
+                  relatedNode={relatedNode(current)} onCard={(eid) => makeCard(current, eid)} onCopy={copy} setN={setSumN} onSummarize={summarize} onDefault={setDefaultN} onMode={setMode} />
               ) : (
-                <ObjectView item={current} now={data.now} keys={keys} ops={opsFor(current)} relatedNode={relatedNode(current)} />
+                <ObjectView item={current} now={data.now} keys={keys} ops={opsFor(current)} relatedNode={relatedNode(current)} onCard={(eid) => makeCard(current, eid)} />
               )}
             </aside>
           </div>
@@ -336,7 +344,7 @@ export function App() {
 
       <Drawer open={!!drawerCard} onClose={() => setDrawer(null)} title={drawerCard?.title ?? "Card"}>
         {drawerCard && (
-          <CardDrawer card={drawerCard} item={data.items.find((i) => i.itemKey === drawerCard.itemKey)} now={data.now} keys={keys} ops={(i) => opsFor(i)} relatedNode={relatedNode}
+          <CardDrawer card={drawerCard} item={data.items.find((i) => i.itemKey === drawerCard.itemKey)} now={data.now} keys={keys} ops={(i) => opsFor(i)} relatedNode={relatedNode} goTo={goTo}
             onSave={async (patch) => { const r = await call("PATCH", `/api/board/cards/${drawerCard.id}`, patch); if (!r.ok) say(r.error ?? "Could not save", { error: true }); await loadBoard(); }}
             onDelete={async () => { const r = await call("DELETE", `/api/board/cards/${drawerCard.id}`); if (!r.ok) return say(r.error ?? "Could not remove", { error: true }); setDrawer(null); await loadBoard(); say("Card removed."); }} />
         )}
@@ -395,12 +403,12 @@ const InboxGroups = memo(function InboxGroups({ groups, now, mode, doneKey, anim
   );
 });
 
-function Thread({ events, now }: { events: Item["events"]; now: number }) {
+function Thread({ events, now, onCard }: { events: Item["events"]; now: number; onCard?: (eventId: string) => void }) {
   return (
     <ol className="thread">
       {events.map((e, i) => (
         <li key={i} className={e.mentionsMe ? "mention" : ""}>
-          <div className="who"><b>{e.authorIsMe ? "You" : e.author}</b><span className="dim mono" style={{ fontSize: 11 }}>{SOURCE_LABEL[e.source]}</span><small>{ago(e.ts, now)}</small></div>
+          <div className="who"><b>{e.authorIsMe ? "You" : e.author}</b><span className="dim mono" style={{ fontSize: 11 }}>{SOURCE_LABEL[e.source]}</span><small>{ago(e.ts, now)}</small>{onCard && <MakeCard onClick={() => onCard(e.id)} />}</div>
           <div className="body">{e.body}</div>
         </li>
       ))}
@@ -409,7 +417,7 @@ function Thread({ events, now }: { events: Item["events"]; now: number }) {
 }
 
 /** The one full representation of a Ticket / PR / Reminder. Used by the inbox detail and the board drawer. */
-function ObjectView({ item, now, keys, ops, relatedNode }: { item: Item; now: number; keys: Keymap; ops: Ops; relatedNode: React.ReactNode }) {
+function ObjectView({ item, now, keys, ops, relatedNode, onCard }: { item: Item; now: number; keys: Keymap; ops: Ops; relatedNode: React.ReactNode; onCard?: (eventId: string) => void }) {
   const kind = kindOf(item.itemKey);
   const w = why(item);
   return (
@@ -420,12 +428,12 @@ function ObjectView({ item, now, keys, ops, relatedNode }: { item: Item; now: nu
       {item.reason && <p className="reason">{item.reason}</p>}
       <Verbs verbs={verbsFor(item, ops, keys, urlsOf(item))} />
       {relatedNode}
-      {item.events.length > 0 && <section className="section"><h4>Activity</h4><Thread events={item.events} now={now} /></section>}
+      {item.events.length > 0 && <section className="section"><h4>Activity</h4><Thread events={item.events} now={now} onCard={onCard} /></section>}
     </div>
   );
 }
 
-function CardDrawer({ card, item, now, keys, ops, relatedNode, onSave, onDelete }: { card: BoardCard; item?: Item; now: number; keys: Keymap; ops: (i: Item) => Ops; relatedNode: (i: Item) => React.ReactNode; onSave: (p: object) => Promise<void>; onDelete: () => void }) {
+function CardDrawer({ card, item, now, keys, ops, relatedNode, goTo, onSave, onDelete }: { card: BoardCard; item?: Item; now: number; keys: Keymap; ops: (i: Item) => Ops; relatedNode: (i: Item) => React.ReactNode; goTo: (key: string) => void; onSave: (p: object) => Promise<void>; onDelete: () => void }) {
   const [title, setTitle] = useState(card.title);
   const [notes, setNotes] = useState(card.notes);
   useEffect(() => { setTitle(card.title); setNotes(card.notes); }, [card.id]);
@@ -437,6 +445,13 @@ function CardDrawer({ card, item, now, keys, ops, relatedNode, onSave, onDelete 
           <input className="tt" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={() => title.trim() && title !== card.title && onSave({ title })} />
         </>
       )}
+      {card.originLabel && (
+        <p className="origin">Made from a message · <b>{card.originLabel}</b>
+          {card.originKey && <button className="link" onClick={() => goTo(card.originKey!)}>Open it</button>}
+          {card.originUrl && <a className="link" href={card.originUrl} target="_blank" rel="noopener noreferrer">Source ↗</a>}
+        </p>
+      )}
+      {card.sources.includes("jira") && card.itemKey && <p className="origin dim">Synced from Jira, one way. Moving this card does not change Jira; use <b>Move</b> on the ticket for that.</p>}
       <section className="section">
         <h4>On the board · {card.col}</h4>
         <textarea rows={4} value={notes} placeholder="Notes…" onChange={(e) => setNotes(e.target.value)} onBlur={() => notes !== card.notes && onSave({ notes })} />

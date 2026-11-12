@@ -70,3 +70,15 @@ test("a manual chat can be summarised on demand and gets a copy-only draft", asy
   await expect(page.getByTestId("summary")).toContainText("Lena is blocked");
   await expect(page.getByTestId("draft")).toContainText("review the PR");
 });
+
+test("hovering a message offers 'make a board card'; the card links back and the action is undoable", async ({ page }) => {
+  const bubble = page.getByTestId("chat").locator(".bubblewrap").first();
+  await bubble.hover();
+  await bubble.getByRole("button", { name: /Make a board card/ }).click();
+  await expect(page.getByText("Card added to the board.")).toBeVisible();
+  await page.keyboard.press("2");
+  const card = page.locator('.col[data-col="Pending"] .card', { has: page.locator(".from") });
+  await expect(card).toHaveCount(1);
+  await card.dblclick();
+  await expect(page.getByTestId("drawer").locator(".origin", { hasText: "Made from a message" })).toBeVisible();
+});

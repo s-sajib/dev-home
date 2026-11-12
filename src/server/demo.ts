@@ -54,6 +54,16 @@ export function demoEvents(now: number): NormalizedEvent[] {
       title: "API-90 Rate-limit headers on /v2", author: "Sam Okafor", url: `${jira}/API-90`, ts: now - 30 * H,
       meta: { status: "Backlog", statusCategory: "new", assignedToMe: true } },
 
+    // GitHub issues: open + labelled, open + plain, closed
+    { ...base, source: "github", sourceId: "issue:acme/web#311", kind: "issue", nativeKey: "issue:acme/web#311", ticketKey: null, title: "Cookie banner blocks the mobile menu (acme/web#311)", author: "Lena Park",
+      url: "https://github.com/acme/web/issues/311", ts: now - 9 * H, meta: { assignedToMe: true, state: "open", labels: ["bug", "blocked"] } },
+    { ...base, source: "github", sourceId: "ic:acme/web#311:1", kind: "comment", nativeKey: "issue:acme/web#311", ticketKey: null, title: "Cookie banner blocks the mobile menu (acme/web#311)", author: "Lena Park", mentionsMe: true,
+      body: "@You can you confirm the z-index fix? Reproduces on iOS Safari only.", url: "https://github.com/acme/web/issues/311#issuecomment-1", ts: now - 8 * H },
+    { ...base, source: "github", sourceId: "issue:acme/docs#12", kind: "issue", nativeKey: "issue:acme/docs#12", ticketKey: null, title: "Document the retry policy in the API reference (acme/docs#12)", author: "Dana Rivera",
+      url: "https://github.com/acme/docs/issues/12", ts: now - 3 * D, meta: { assignedToMe: true, state: "open", labels: ["documentation"] } },
+    { ...base, source: "github", sourceId: "issue:acme/api#88", kind: "issue", nativeKey: "issue:acme/api#88", ticketKey: null, title: "Pagination returns duplicates on page 2 (acme/api#88)", author: "Sam Okafor",
+      url: "https://github.com/acme/api/issues/88", ts: now - 2 * D, meta: { assignedToMe: true, state: "closed", labels: ["bug"] } },
+
     // 1:1 chat with a teammate, owed reply
     { ...base, source: "whatsapp", sourceId: "d1", kind: "chat", nativeKey: "chat:447700900007@c.us", ticketKey: null, title: "Lena Park",
       author: "Lena Park", mentionsMe: true, body: "Hey, can you review my pagination PR when you get a sec? I'm blocked on API-77 until it's merged.", ts: now - 5 * H },

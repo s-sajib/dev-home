@@ -4,25 +4,26 @@ import type { Keymap } from "../shared/keys";
 import type { Item } from "./Chat";
 import { FLAG_LABEL, VERDICT_LABEL, ago, flagTone, sortFlags, type Tone } from "./format";
 import { useIsSelected } from "./selection";
-import { AlarmClockIcon, ArrowUpRightIcon, CheckIcon, CircleCheckIcon, GitPullRequestIcon, MessageCircleIcon, StickyNoteIcon, TicketIcon, useIconHover, type IconHandle } from "./icons";
+import { AlarmClockIcon, ArrowUpRightIcon, CheckIcon, CircleCheckIcon, CircleDotIcon, GitPullRequestIcon, MessageCircleIcon, StickyNoteIcon, TicketIcon, useIconHover, type IconHandle } from "./icons";
 import { Tip } from "./ui";
 
 /**
  * OOUX: the app has five objects. Each has ONE glyph, ONE way to name its "why you", ONE verb row,
  * and the same representation everywhere (inbox row, board card, detail, drawer).
  */
-export type Kind = "ticket" | "pr" | "chat" | "reminder" | "note";
-export const KIND_LABEL: Record<Kind, string> = { ticket: "Ticket", pr: "Pull request", chat: "Conversation", reminder: "Reminder", note: "Note" };
+export type Kind = "ticket" | "issue" | "pr" | "chat" | "reminder" | "note";
+export const KIND_LABEL: Record<Kind, string> = { ticket: "Ticket", issue: "Issue", pr: "Pull request", chat: "Conversation", reminder: "Reminder", note: "Note" };
 
 export function kindOf(itemKey: string | null): Kind {
   if (!itemKey) return "note";
   if (itemKey.startsWith("chat:")) return "chat";
   if (itemKey.startsWith("pr:")) return "pr";
+  if (itemKey.startsWith("issue:")) return "issue";
   if (itemKey.startsWith("reminder:")) return "reminder";
   return "ticket";
 }
 
-const ICON = { ticket: TicketIcon, pr: GitPullRequestIcon, chat: MessageCircleIcon, reminder: AlarmClockIcon, note: StickyNoteIcon } as const;
+const ICON = { ticket: TicketIcon, issue: CircleDotIcon, pr: GitPullRequestIcon, chat: MessageCircleIcon, reminder: AlarmClockIcon, note: StickyNoteIcon } as const;
 const LIVE_EVERY_MS = 6000;
 
 /** One shared observer: an animated icon is only mounted once its slot has been near the viewport. */
@@ -145,7 +146,7 @@ export function verbsFor(item: Item, ops: Ops, keys: Keymap, urls: { main: strin
   ];
   if (kind === "reminder") return [{ id: "complete", label: "Complete", key: keys.complete, primary: true, onClick: ops.complete }, ...common];
   const open: Verb[] = [
-    { id: "open", label: kind === "ticket" ? "Open ticket" : "Open", key: keys.open, primary: true, hidden: !urls.main, onClick: () => ops.open(urls.main!), icon: ({ ref }) => <ArrowUpRightIcon ref={ref} size={14} /> },
+    { id: "open", label: kind === "ticket" ? "Open ticket" : kind === "issue" ? "Open issue" : "Open", key: keys.open, primary: true, hidden: !urls.main, onClick: () => ops.open(urls.main!), icon: ({ ref }) => <ArrowUpRightIcon ref={ref} size={14} /> },
     { id: "pr", label: "Open PR", hidden: !urls.pr, onClick: () => ops.open(urls.pr!), icon: ({ ref }) => <ArrowUpRightIcon ref={ref} size={14} /> },
   ];
   const jira: Verb[] = kind === "ticket" && item.ticketKey ? [

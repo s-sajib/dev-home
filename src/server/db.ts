@@ -125,6 +125,13 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX board_col ON board_cards (col, pos);
   `,
+  `
+  ALTER TABLE board_cards ADD COLUMN origin_key TEXT;
+  ALTER TABLE board_cards ADD COLUMN origin_label TEXT;
+  ALTER TABLE board_cards ADD COLUMN origin_url TEXT;
+  ALTER TABLE board_cards ADD COLUMN origin_event TEXT;
+  CREATE UNIQUE INDEX board_origin_event ON board_cards (origin_key, origin_event) WHERE origin_event IS NOT NULL;
+  `,
 ];
 
 export function openDb(path: string): DB {

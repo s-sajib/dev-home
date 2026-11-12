@@ -14,6 +14,8 @@ export interface GithubDeps {
   /** Include my recently merged PRs (feeds the board's Merged column) */
   merged?: boolean;
   mergedDays?: number;
+  /** Issues assigned to me / mentioning me (open, plus recently closed) */
+  issues?: boolean;
 }
 
 export function createGithubAdapter(deps: Maybe<GithubDeps>): SourceAdapter {
@@ -102,7 +104,43 @@ async function fetchGithub(d: GithubDeps): Promise<NormalizedEvent[]> {
     for (const c of reviewComments) push(c, "rc", c.body ?? "");
     for (const r of reviews) if (r.body) push(r, "rv", r.body);
   }
+  if (d.issues !== false) events.push(...(await fetchIssues(d, get, since)));
   return events;
+}
+
+/** GitHub issues: assigned to me or mentioning me. Open ones are work; recently closed ones update their card. */
+async function fetchIssues(d: GithubDeps, get: (url: string) => Promise<any>, since: string): Promise<NormalizedEvent[]> {
+  const u = d.username;
+  const q = (extra: string) => get(`/search/issues?q=${encodeURIComponent(`is:issue ${extra}`)}&per_page=30`).catch(() => ({ items: [] }));
+  const [assignedOpen, assignedClosed, mentioned] = await Promise.all([
+    q(`is:open assignee:${u}`),
+    q(`is:closed assignee:${u} closed:>=${since}`),
+    d.mentions === false ? Promise.resolve({ items: [] }) : q(`is:open mentions:${u}`),
+  ]);
+  const seen = new Map<string, any>();
+  for (const i of [...(mentioned.items ?? []), ...(assignedClosed.items ?? []), ...(assignedOpen.items ?? [])]) seen.set(i.html_url, i);
+  const out: NormalizedEvent[] = [];
+  for (const issue of seen.values()) {
+    if (issue.pull_request) continue; // PRs come from the PR queries
+    const repo = issue.repository_url.replace("https://api.github.com/repos/", "");
+    const n = issue.number;
+    const nativeKey = `issue:${repo}#${n}`;
+    const assignedToMe = (issue.assignees ?? []).some((a: any) => String(a.login).toLowerCase() === u.toLowerCase()) || String(issue.assignee?.login).toLowerCase() === u.toLowerCase();
+    const ticketKey = firstTicketKey(issue.title) ?? null;
+    const title = `${issue.title} (${repo}#${n})`;
+    const ts = Date.parse(issue.updated_at) || Date.now();
+    out.push({ source: "github", sourceId: nativeKey, kind: "issue", nativeKey, ticketKey, title, author: issue.user?.login ?? "", authorIsMe: false, body: "", url: issue.html_url, ts, mentionsMe: false,
+      meta: { assignedToMe, state: issue.state, labels: (issue.labels ?? []).map((l: any) => String(l.name ?? l).toLowerCase()) } });
+    if (issue.state === "closed") continue;
+    const comments = await get(`/repos/${repo}/issues/${n}/comments?per_page=20`).catch(() => []);
+    for (const c of comments) {
+      const login = c.user?.login ?? "";
+      if (isBot(login, d.bots)) continue;
+      out.push({ source: "github", sourceId: `ic:${repo}#${n}:${c.id}`, kind: "comment", nativeKey, ticketKey, title, author: login, authorIsMe: login.toLowerCase() === u.toLowerCase(), body: c.body ?? "", url: c.html_url ?? issue.html_url,
+        ts: Date.parse(c.updated_at ?? c.created_at) || Date.now(), mentionsMe: new RegExp(`@${u}\\b`, "i").test(c.body ?? ""), meta: {} });
+    }
+  }
+  return out;
 }
 
 const DEFAULT_BOTS = ["dependabot", "github-actions", "renovate", "codecov"];

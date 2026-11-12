@@ -24,6 +24,11 @@ export const DEFAULT_STATUS_MAP = [
   "Code Review = PR Review",
   "Done = Merged",
   "Closed = Merged",
+  // GitHub issues: state and labels use the same map
+  "blocked = Decision Needed",
+  "needs decision = Decision Needed",
+  "in progress = In Progress",
+  "in review = PR Review",
 ];
 
 export interface BoardCard {
@@ -41,9 +46,13 @@ export interface BoardCard {
   sources: Source[];
   status: string | null;
   lastActivity: number | null;
+  /** set when the card was made from a single message / comment */
+  originKey: string | null;
+  originLabel: string | null;
+  originUrl: string | null;
 }
 
-type BoardCfg = Pick<Config, "boardColumns" | "boardStatusMap" | "boardIntake" | "boardIncludeReviews">;
+type BoardCfg = Pick<Config, "boardColumns" | "boardStatusMap" | "boardIntake" | "boardIncludeReviews"> & Partial<Pick<Config, "boardSyncJira" | "boardMessageColumn">>;
 
 export function parseStatusMap(lines: string[]): Map<string, string> {
   const m = new Map<string, string>();
@@ -65,7 +74,10 @@ export function autoColumn(events: NormalizedEvent[], cfg: BoardCfg): string | n
   const cols = cfg.boardColumns;
   const map = parseStatusMap(cfg.boardStatusMap);
   const ticket = events.find((e) => e.kind === "ticket");
-  const status = String(ticket?.meta.status ?? "");
+  const issue = events.find((e) => e.kind === "issue");
+  // Jira status first; for a GitHub issue, its labels (first one the map knows) then its open/closed state
+  const keys = ticket ? [String(ticket.meta.status ?? "")] : issue ? [...((issue.meta.labels as string[]) ?? []), String(issue.meta.state ?? "")] : [];
+  const status = keys.find((k) => map.has(k.toLowerCase())) ?? "";
   const fromJira = findCol(cols, map.get(status.toLowerCase()));
   if (fromJira && eq(fromJira, "Decision Needed")) return fromJira;
 
@@ -90,6 +102,7 @@ function nextPos(db: DB, col: string): number {
 
 const qualifies = (events: NormalizedEvent[], cfg: BoardCfg) =>
   events.some((e) => e.kind === "ticket" && e.meta.assignedToMe === true) ||
+  events.some((e) => e.kind === "issue" && e.meta.assignedToMe === true) ||
   events.some((e) => e.kind === "pr" && e.meta.mine === true) ||
   (cfg.boardIncludeReviews && events.some((e) => e.kind === "review_request" && e.meta.open !== false));
 
@@ -106,6 +119,7 @@ export function syncBoard(db: DB, cfg: BoardCfg, now = Date.now()): { created: n
   db.transaction(() => {
     for (const [key, evs] of groups) {
       if (!qualifies(evs, cfg)) continue;
+      if (cfg.boardSyncJira === false && evs.some((e) => e.source === "jira")) continue; // one-way Jira sync switched off
       const target = autoColumn(evs, cfg) ?? findCol(cfg.boardColumns, cfg.boardIntake) ?? cfg.boardColumns[0]!;
       const titled = [...evs].reverse().find((e) => e.title);
       const urlEv = [...evs].reverse().find((e) => e.url && (e.kind === "ticket" || e.kind === "pr" || e.kind === "review_request")) ?? evs.find((e) => e.url);
@@ -140,12 +154,13 @@ export function getBoard(db: DB, cfg: BoardCfg & Pick<Config, "boardColumns">, n
       // a card whose column was removed from settings shows in the first column until moved
       col: findCol(cols, r.col) ?? cols[0]!, pos: r.pos, pinned: !!r.pinned,
       flags: it?.flags ?? [], sources: it?.sources ?? [], status: status.get(r.item_key) ?? null, lastActivity: it?.lastActivity ?? null,
+      originKey: r.origin_key ?? null, originLabel: r.origin_label ?? null, originUrl: r.origin_url ?? null,
     };
   });
   return { columns: cols, cards };
 }
 
-export function addCard(db: DB, cfg: BoardCfg, input: { title: string; notes?: string; col?: string; itemKey?: string; url?: string | null; ticketKey?: string | null }, now = Date.now()): number {
+export function addCard(db: DB, cfg: BoardCfg, input: { title: string; notes?: string; col?: string; itemKey?: string; url?: string | null; ticketKey?: string | null; origin?: { key: string; label: string; url: string | null; event: string } }, now = Date.now()): number {
   const title = input.title.trim();
   if (!title) throw new Error("A card needs a title");
   const col = findCol(cfg.boardColumns, input.col) ?? cfg.boardColumns[0]!;
@@ -153,8 +168,10 @@ export function addCard(db: DB, cfg: BoardCfg, input: { title: string; notes?: s
     const ex = db.query("SELECT id FROM board_cards WHERE item_key = ?").get(input.itemKey) as { id: number } | null;
     if (ex) throw new Error("This item is already on the board");
   }
-  const r = db.query("INSERT INTO board_cards (item_key, title, notes, url, ticket_key, col, pos, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)")
-    .run(input.itemKey ?? null, title.slice(0, 300), (input.notes ?? "").slice(0, 5000), input.url ?? null, input.ticketKey ?? null, col, nextPos(db, col), now, now);
+  const o = input.origin;
+  if (o && db.query("SELECT id FROM board_cards WHERE origin_key = ? AND origin_event = ?").get(o.key, o.event)) throw new Error("This message is already a card on the board");
+  const r = db.query("INSERT INTO board_cards (item_key, title, notes, url, ticket_key, col, pos, pinned, created_at, updated_at, origin_key, origin_label, origin_url, origin_event) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)")
+    .run(input.itemKey ?? null, title.slice(0, 300), (input.notes ?? "").slice(0, 5000), input.url ?? null, input.ticketKey ?? null, col, nextPos(db, col), now, now, o?.key ?? null, o?.label ?? null, o?.url ?? null, o?.event ?? null);
   return Number(r.lastInsertRowid);
 }
 
@@ -183,4 +200,25 @@ export function updateCard(db: DB, id: number, patch: { title?: string; notes?: 
 
 export function removeCard(db: DB, id: number) {
   db.query("DELETE FROM board_cards WHERE id = ?").run(id);
+}
+
+const SOURCE_NAME: Record<string, string> = { whatsapp: "WhatsApp", jira: "Jira", github: "GitHub", reminders: "Reminders" };
+
+/** Make a board card from one message or comment. The card links back to where it came from. */
+export function cardFromEvent(db: DB, cfg: BoardCfg, input: { itemKey: string; eventId: string; col?: string }, now = Date.now()): number {
+  const row = db.query("SELECT * FROM events WHERE source_id = ? AND (native_key = ? OR ticket_key = ?)").get(input.eventId, input.itemKey, input.itemKey.replace(/^ticket:/, "")) as any;
+  if (!row) throw new Error("That message or comment was not found");
+  const clean = String(row.body ?? "").replace(/@[\w.-]+/g, "").replace(/\s+/g, " ").trim();
+  const firstSentence = clean.split(/(?<=[.!?])\s/)[0] ?? clean;
+  const title = (firstSentence.length > 8 ? firstSentence : clean || "Follow up").slice(0, 90);
+  const when = new Date(row.ts).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const who = row.author_is_me ? "Me" : row.author;
+  const place = row.source === "whatsapp" ? `WhatsApp · ${row.title}` : `${SOURCE_NAME[row.source] ?? row.source} · ${row.title}`;
+  return addCard(db, cfg, {
+    title,
+    notes: `“${String(row.body ?? "").trim().slice(0, 800)}”\n— ${who}, ${when}`,
+    col: input.col ?? cfg.boardMessageColumn ?? cfg.boardColumns[0],
+    ticketKey: row.ticket_key ?? null,
+    origin: { key: input.itemKey, label: place, url: row.url ?? null, event: input.eventId },
+  }, now);
 }

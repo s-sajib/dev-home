@@ -45,6 +45,8 @@ export const FIELDS: Field[] = [
   { key: "boardColumns", group: "Board", label: "Columns", help: "One per line, left to right. Pick a pipeline or write your own. Cards in a removed column show in the first one.", type: "list", default: PIPELINE_B, presets: { "Pipeline A (Stage, Prod)": PIPELINE_A, "Pipeline B (Stage, Ready for Release, Prod)": PIPELINE_B } },
   { key: "boardStatusMap", group: "Board", label: "Jira status → column", help: "One per line as `Jira status = Column`. An open PR pulls a ticket to PR Review and a merged PR to Merged; Decision Needed always wins. Moving a card by hand pins it.", type: "list", default: DEFAULT_STATUS_MAP },
   { key: "boardIntake", group: "Board", label: "Column for unmapped statuses", type: "text", default: "To Do" },
+  { key: "boardSyncJira", group: "Board", label: "Sync Jira tickets to the board (one way)", help: "Tickets assigned to me create cards and their Jira status moves unpinned cards. Moving a card on the board never changes Jira.", type: "bool", default: true },
+  { key: "boardMessageColumn", group: "Board", label: "Column for cards made from a message or comment", type: "text", default: "Pending" },
   { key: "boardIncludeReviews", group: "Board", label: "Put PRs waiting for my review on the board", type: "bool", default: true },
 
   // Rules
@@ -75,6 +77,7 @@ export const FIELDS: Field[] = [
   { key: "githubMyPrs", group: "GitHub", label: "Include my own PRs (comments, failing checks)", type: "bool", default: true },
   { key: "githubMentions", group: "GitHub", label: "Include PRs that mention me", type: "bool", default: true },
   { key: "githubMerged", group: "GitHub", label: "Include my recently merged PRs", help: "Feeds the board's Merged column.", type: "bool", default: true },
+  { key: "githubIssues", group: "GitHub", label: "Include issues assigned to me or mentioning me", help: "They become Issue items and board cards. Labels can place them: add lines like `blocked = Decision Needed` to the board status map.", type: "bool", default: true },
   { key: "githubBots", group: "GitHub", label: "Ignore these bot accounts", help: "Accounts ending in [bot] are always ignored.", type: "list", default: ["dependabot", "github-actions", "renovate", "codecov"] },
 
   // WhatsApp
@@ -243,6 +246,8 @@ export function buildConfig(env: Record<string, string | undefined>, saved: Reco
     boardStatusMap: v.boardStatusMap,
     boardIntake: v.boardIntake,
     boardIncludeReviews: v.boardIncludeReviews,
+    boardSyncJira: v.boardSyncJira,
+    boardMessageColumn: v.boardMessageColumn || "Pending",
     mcpAllowWrites: v.mcpAllowWrites,
     theme: v.theme,
     jira:
@@ -252,7 +257,7 @@ export function buildConfig(env: Record<string, string | undefined>, saved: Reco
     transitions: v.jiraTransitions,
     github:
       v.githubUsername && v.githubToken
-        ? { token: v.githubToken, username: v.githubUsername, bots: v.githubBots, reviewRequests: v.githubReviewRequests, myPrs: v.githubMyPrs, mentions: v.githubMentions, merged: v.githubMerged }
+        ? { token: v.githubToken, username: v.githubUsername, bots: v.githubBots, reviewRequests: v.githubReviewRequests, myPrs: v.githubMyPrs, mentions: v.githubMentions, merged: v.githubMerged, issues: v.githubIssues }
         : null,
     reminders: { list: v.remindersList || "Work Inbox", enabled: v.remindersEnabled },
     whatsapp: v.wahaUrl

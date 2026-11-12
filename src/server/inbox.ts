@@ -107,7 +107,7 @@ export function listItems(db: DB, now: number): InboxItem[] {
       events: (byItem.get(r.item_key) ?? [])
         .filter((e) => e.body)
         .map((e) => ({
-          source: e.source, kind: e.kind, author: e.author, authorIsMe: e.authorIsMe,
+          id: e.sourceId, source: e.source, kind: e.kind, author: e.author, authorIsMe: e.authorIsMe,
           body: e.body, url: e.url, ts: e.ts, mentionsMe: e.mentionsMe,
         }))
         .slice(it_isChat(r.item_key) ? -120 : -12),

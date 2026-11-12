@@ -7,6 +7,7 @@ import { Glyph, Lamp, kindOf, why } from "./objects";
 export interface BoardCard {
   id: number; itemKey: string | null; title: string; notes: string; url: string | null; ticketKey: string | null;
   col: string; pos: number; pinned: boolean; flags: string[]; sources: string[]; status: string | null; lastActivity: number | null;
+  originKey: string | null; originLabel: string | null; originUrl: string | null;
 }
 export interface BoardData { columns: string[]; cards: BoardCard[] }
 
@@ -92,6 +93,7 @@ const CardFace = memo(function CardFace({ card: c, sel, now, glide, onSelect, on
       <div className="ct"><Glyph ref={hover.ref} kind={kindOf(c.itemKey)} size={16} live={w?.tone === "warn" && kindOf(c.itemKey) === "reminder"} /><span>{c.title}</span></div>
       {c.notes && <div className="cn">{c.notes}</div>}
       <div className="cm">
+        {c.originLabel && <span className="from" title={c.originLabel}>from {c.originLabel.split(" · ")[0]}</span>}
         {c.ticketKey && <span className="key">{c.ticketKey}</span>}
         {w && w.tone && <Lamp tone={w.tone} />}
         {c.pinned && <span className="pin" title="Placed by hand. Automation won't move it.">◆</span>}

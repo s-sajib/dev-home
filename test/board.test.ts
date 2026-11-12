@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { createApi, guardRequest } from "../src/server/api";
-import { addCard, autoColumn, getBoard, moveCard, parseStatusMap, PIPELINE_A, PIPELINE_B, removeCard, syncBoard, updateCard } from "../src/server/board";
+import { addCard, autoColumn, cardFromEvent, getBoard, moveCard, parseStatusMap, PIPELINE_A, PIPELINE_B, removeCard, syncBoard, updateCard } from "../src/server/board";
 import { loadConfig } from "../src/server/config";
 import { openDb } from "../src/server/db";
 import { demoEvents, demoRunner, seedDemo } from "../src/server/demo";
@@ -199,5 +199,51 @@ describe("local-only API guard (CSRF / DNS rebinding)", () => {
     expect(bad!.status).toBe(403);
     const hook = await api(new Request("http://host.docker.internal:3571/webhook/waha?token=tok", { method: "POST", headers: { host: "host.docker.internal:3571" }, body: JSON.stringify({ event: "ping" }) }));
     expect(hook!.status).toBe(200);
+  });
+});
+
+const issue = (meta: Record<string, unknown>): NormalizedEvent => ({ ...base, source: "github", sourceId: "gi", kind: "issue", nativeKey: "issue:o/r#5", ticketKey: null, title: "o/r#5 thing", meta: { assignedToMe: true, state: "open", labels: [], ...meta } });
+
+describe("GitHub issues on the board", () => {
+  test("open → To Do, blocked label → Decision Needed, closed → Merged", () => {
+    expect(autoColumn([issue({})], cfg)).toBe("To Do");
+    expect(autoColumn([issue({ labels: ["blocked"] })], cfg)).toBe("Decision Needed");
+    expect(autoColumn([issue({ state: "closed" })], cfg)).toBe("Merged");
+  });
+});
+
+describe("cards from a single message", () => {
+  const chat = (id: string, body: string): NormalizedEvent => ({ ...base, source: "whatsapp", sourceId: id, kind: "chat", nativeKey: "chat:g1", ticketKey: null, title: "Acme Support Group", author: "Dana", body });
+  test("makes a Pending card with a link back, and refuses a duplicate", () => {
+    const db = openDb(":memory:");
+    upsertEvents(db, [chat("m1", "Can you check the invoice export? It fails for EU customers.")]);
+    const id = cardFromEvent(db, cfg, { itemKey: "chat:g1", eventId: "m1" }, now);
+    const card = getBoard(db, cfg, now).cards.find((c) => c.id === id)!;
+    expect(card.col).toBe("Pending");
+    expect(card.title).toBe("Can you check the invoice export?");
+    expect(card.originKey).toBe("chat:g1");
+    expect(card.originLabel).toBe("WhatsApp · Acme Support Group");
+    expect(() => cardFromEvent(db, cfg, { itemKey: "chat:g1", eventId: "m1" }, now)).toThrow(/already a card/);
+  });
+  test("unknown message is an error", () => {
+    expect(() => cardFromEvent(openDb(":memory:"), cfg, { itemKey: "chat:g1", eventId: "nope" })).toThrow(/not found/);
+  });
+});
+
+describe("Jira sync is one way", () => {
+  test("boardSyncJira=false stops Jira tickets becoming cards", () => {
+    const db = openDb(":memory:");
+    upsertEvents(db, demoEvents(now));
+    syncBoard(db, { ...cfg, boardSyncJira: false }, now);
+    expect(getBoard(db, cfg, now).cards.some((c) => c.title.includes("PAY-231"))).toBe(false);
+  });
+  test("moving a card never calls the network", () => {
+    const db = openDb(":memory:");
+    upsertEvents(db, demoEvents(now));
+    syncBoard(db, cfg, now);
+    const orig = globalThis.fetch; let calls = 0;
+    globalThis.fetch = (() => { calls++; throw new Error("no network"); }) as any;
+    try { const c = getBoard(db, cfg, now).cards[0]; moveCard(db, cfg, c.id, "Deployed Prod"); } finally { globalThis.fetch = orig; }
+    expect(calls).toBe(0);
   });
 });

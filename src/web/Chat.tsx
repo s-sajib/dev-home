@@ -4,8 +4,8 @@ import type { Keymap } from "../shared/keys";
 import type { InboxItem } from "../server/types";
 import { ago, dayLabel, initials, personColor, timeLabel } from "./format";
 import { Lamp, Verbs, why, type Verb } from "./objects";
-import { CheckIcon, ChevronDownIcon, CopyIcon, LockIcon, SparklesIcon, useIconHover } from "./icons";
-import { Menu, Segmented } from "./ui";
+import { CheckIcon, ChevronDownIcon, CopyIcon, KanbanIcon, LockIcon, SparklesIcon, useIconHover } from "./icons";
+import { Menu, Segmented, Tip } from "./ui";
 
 export type LlmMode = "manual" | "auto" | "never";
 export interface SummaryDto { n: number; summary: string; actionItems: string[]; replyNeeded: boolean; sensitive: boolean; createdAt: number }
@@ -13,10 +13,10 @@ export type Item = InboxItem & { draft: string | null; llmMode: LlmMode | null; 
 
 export interface ChatProps {
   item: Item; now: number; busy: string | null; defaultN: number; n: number; presets: number[]; keys: Keymap; verbs: Verb[]; relatedNode: ReactNode;
-  onCopy: (t: string) => void; setN: (n: number) => void; onSummarize: (n: number) => void; onDefault: (n: number) => void; onMode: (m: LlmMode) => void;
+  onCard: (eventId: string) => void; onCopy: (t: string) => void; setN: (n: number) => void; onSummarize: (n: number) => void; onDefault: (n: number) => void; onMode: (m: LlmMode) => void;
 }
 
-interface Run { author: string; mine: boolean; msgs: { body: string; ts: number; mention: boolean }[] }
+interface Run { author: string; mine: boolean; msgs: { id: string; body: string; ts: number; mention: boolean }[] }
 
 /** Consecutive messages by the same person within 5 minutes read as one run, like a real chat. */
 export function toRuns(events: Item["events"]): { day: string | null; run: Run }[] {
@@ -32,7 +32,7 @@ export function toRuns(events: Item["events"]): { day: string | null; run: Run }
       out.push({ day: newDay ? String(e.ts) : null, run: cur });
       lastDay = day;
     }
-    cur.msgs.push({ body: e.body, ts: e.ts, mention: e.mentionsMe });
+    cur.msgs.push({ id: e.id, body: e.body, ts: e.ts, mention: e.mentionsMe });
     lastTs = e.ts;
   }
   return out;
@@ -108,7 +108,7 @@ export function Chat(p: ChatProps) {
       )}
 
       <div className="convo" ref={convo}>
-        <Messages events={item.events} now={now} isGroup={isGroup} />
+        <Messages events={item.events} now={now} isGroup={isGroup} onCard={p.onCard} />
         {item.draft && (
           <motion.div className="draftbubble" data-testid="draft" initial={{ opacity: 0, y: 10, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 360, damping: 30, delay: 0.15 }}>
             <header>Draft · not sent <button className={`copy ${copied ? "copied" : ""}`} {...copyHover.triggerProps} onClick={() => { p.onCopy(item.draft!); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }}>{copied ? <><CheckIcon size={13} />Copied</> : <><CopyIcon ref={copyHover.ref} size={13} />Copy <kbd>{p.keys.copy}</kbd></>}</button></header>
@@ -125,7 +125,7 @@ export function Chat(p: ChatProps) {
 }
 
 /** The conversation itself. Memoised on the events array, so unrelated re-renders never touch 120 animated bubbles. */
-const Messages = memo(function Messages({ events, now, isGroup }: { events: Item["events"]; now: number; isGroup: boolean }) {
+const Messages = memo(function Messages({ events, now, isGroup, onCard }: { events: Item["events"]; now: number; isGroup: boolean; onCard: (eventId: string) => void }) {
   const runs = toRuns(events);
   return (
     <>
@@ -136,7 +136,7 @@ const Messages = memo(function Messages({ events, now, isGroup }: { events: Item
             <motion.div key={j} className={`msg ${run.mine ? "out" : "in"} ${j === 0 ? "first" : ""}`} data-testid={run.mine ? "msg-out" : "msg-in"}
               initial={{ opacity: 0, y: 8, x: run.mine ? 10 : -10 }} animate={{ opacity: 1, y: 0, x: 0 }} transition={{ type: "spring", stiffness: 420, damping: 34, delay: Math.min(i * 3 + j, 12) * 0.022 }}>
               {j === 0 && !run.mine && isGroup && <div className="who-name" style={{ color: personColor(run.author) }}>{run.author}</div>}
-              <div className={`bubble ${m.mention ? "mention" : ""}`}>{withMentions(m.body)}</div>
+              <div className="bubblewrap"><div className={`bubble ${m.mention ? "mention" : ""}`}>{withMentions(m.body)}</div><MakeCard onClick={() => onCard(m.id)} /></div>
               {j === run.msgs.length - 1 && <div className="stamp">{timeLabel(m.ts)}</div>}
             </motion.div>
           ))}
@@ -145,3 +145,13 @@ const Messages = memo(function Messages({ events, now, isGroup }: { events: Item
     </>
   );
 });
+
+/** Hover action on a message or comment: turn it into a board card that links back here. */
+export function MakeCard({ onClick }: { onClick: () => void }) {
+  const h = useIconHover();
+  return (
+    <Tip label="Make a board card from this">
+      <button className="mk" aria-label="Make a board card from this" onClick={onClick} {...h.triggerProps}><KanbanIcon ref={h.ref} size={13} /></button>
+    </Tip>
+  );
+}

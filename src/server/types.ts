@@ -2,6 +2,7 @@ export type Source = "jira" | "github" | "whatsapp" | "reminders";
 
 export type EventKind =
   | "ticket" // snapshot of a ticket assigned to / watched by me
+  | "issue" // GitHub issue assigned to me or mentioning me
   | "comment" // Jira comment
   | "status_change" // Jira status changed
   | "review_request" // GitHub: my review was requested
@@ -60,6 +61,8 @@ export interface InboxItem {
 }
 
 export interface ItemEvent {
+  /** source event id, so a single message/comment can be referred to (e.g. made into a board card) */
+  id: string;
   source: Source;
   kind: EventKind;
   author: string;

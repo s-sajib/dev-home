@@ -11,7 +11,7 @@ import { chatMessages } from "./chatllm";
 import { autoHandleChats, clampN, getMode, latestSummary, LLM_MODES, modesByItem, setMode, summarizeChat, summaryDefault, type LlmMode } from "./chatllm";
 import { testConnection, type Exec, type Target } from "./connect-test";
 import type { ConfigManager } from "./settings";
-import { addCard, getBoard, moveCard, removeCard, syncBoard, updateCard } from "./board";
+import { addCard, cardFromEvent, getBoard, moveCard, removeCard, syncBoard, updateCard } from "./board";
 import { demoComment, demoRunner as demoAI, demoTransition, seedDemo } from "./demo";
 import { getStatuses, pollOnce } from "./poller";
 import { logAction } from "./store";
@@ -231,7 +231,7 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
       }
     }
 
-    const m = path.match(/^\/items\/(.+)\/(dismiss|snooze|restore|accept|transition|comment|draft|draft-save|remind|complete|summarize|llm-mode|board)$/);
+    const m = path.match(/^\/items\/(.+)\/(dismiss|snooze|restore|accept|transition|comment|draft|draft-save|remind|complete|summarize|llm-mode|board|card-from-event)$/);
     if (method !== "POST" || !m) return json({ error: "not found" }, 404);
 
     const itemKey = decodeURIComponent(m[1]!);
@@ -257,6 +257,12 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
         else if (action === "snooze") snoozeItem(db, itemKey, Date.now() + Number(body.hours ?? cfg.snoozeHours) * 3_600_000);
         logAction(db, itemKey, action, body, true, "ok");
         return json({ ok: true });
+      }
+
+      if (action === "card-from-event") {
+        const id = cardFromEvent(db, cfg, { itemKey, eventId: String(body.eventId ?? ""), col: body.col });
+        logAction(db, itemKey, "board-add", { fromEvent: body.eventId }, true, String(id));
+        return json({ ok: true, id });
       }
 
       if (action === "board") {

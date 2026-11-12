@@ -70,13 +70,17 @@ export interface Config {
   boardStatusMap: string[];
   boardIntake: string;
   boardIncludeReviews: boolean;
+  /** Jira -> board, one way: Jira tickets create and move cards; moving a card never writes to Jira */
+  boardSyncJira: boolean;
+  /** Column new cards from a message/comment land in */
+  boardMessageColumn: string;
   mcpAllowWrites: boolean;
   theme: "system" | "dark" | "light";
 
   // sources
   jira: { baseUrl: string; email: string; token: string; lookbackDays: number; jql: string } | null;
   transitions: string[];
-  github: { token: string; username: string; bots: string[]; reviewRequests: boolean; myPrs: boolean; mentions: boolean; merged: boolean } | null;
+  github: { token: string; username: string; bots: string[]; reviewRequests: boolean; myPrs: boolean; mentions: boolean; merged: boolean; issues: boolean } | null;
   reminders: { list: string; enabled: boolean };
   whatsapp: WhatsappConfig | null;
 }
