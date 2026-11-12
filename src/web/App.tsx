@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ACTIONS, type ActionId, type Keymap } from "../shared/keys";
 import type { SourceStatus } from "../server/types";
 import { Board, type BoardCard, type BoardData } from "./Board";
@@ -6,7 +6,8 @@ import { Chat, type Item, type LlmMode } from "./Chat";
 import { SOURCE_LABEL, VERDICT_LABEL, ago, buildGroups } from "./format";
 import { Glyph, KIND_LABEL, Lamp, ObjectRow, Verbs, kindOf, related, urlsOf, verbsFor, why, type Ops } from "./objects";
 import { Settings } from "./Settings";
-import { Drawer, Modal, TipProvider } from "./ui";
+import { AnimatePresence, LayoutGroup, motion } from "motion/react";
+import { Drawer, Modal, UiProvider } from "./ui";
 
 interface InboxResponse {
   now: number; items: Item[]; hiddenCount: number; statuses: SourceStatus[];
@@ -33,10 +34,7 @@ export function App() {
   const [grouping, setGrouping] = useState<"auto" | "verdict" | "lane" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [sumN, setSumN] = useState<number | null>(null);
-  const [leaving, setLeaving] = useState<Record<string, "out" | "done">>({});
-  const [landed, setLanded] = useState<{ id: number; col: string } | null>(null);
-  const [glide, setGlide] = useState<{ y: number; h: number } | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const [doneKey, setDoneKey] = useState<string | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => setData(await (await fetch("/api/inbox")).json()), []);
@@ -80,12 +78,12 @@ export function App() {
     if (!item) return;
     const key = item.itemKey;
     const nextKey = flat[idx + 1]?.itemKey ?? flat[idx - 1]?.itemKey ?? null;
-    const exits = ["dismiss", "snooze", "complete"].includes(action) && view === "inbox";
-    if (exits) { setLeaving((l) => ({ ...l, [key]: action === "complete" ? "done" : "out" })); await new Promise((r) => setTimeout(r, action === "complete" ? 520 : 230)); }
+    // completing a reminder shows a drawn check for a beat before the row leaves; other exits are AnimatePresence
+    if (action === "complete") { setDoneKey(key); await new Promise((r) => setTimeout(r, 480)); }
     setBusy(action);
     const r = await post(key, action, body);
     setBusy(null);
-    if (exits) setLeaving((l) => { const n = { ...l }; delete n[key]; return n; });
+    if (action === "complete") setDoneKey(null);
     if (!r.ok) { say(r.error ?? "Failed", { error: true }); return r; }
     if (okText) say(okText, undoable ? { undo: async () => { await post(key, "restore"); await load(); } } : {});
     if (["dismiss", "snooze"].includes(action) && key === current?.itemKey) setSelKey(nextKey);
@@ -137,7 +135,6 @@ export function App() {
   const moveCardTo = async (id: number, col: string, index?: number) => {
     const r = await (await fetch(`/api/board/cards/${id}`, json("PATCH", { col, index }))).json();
     if (!r.ok) say(r.error ?? "Could not move the card", { error: true });
-    else { setLanded({ id, col }); window.setTimeout(() => setLanded(null), 700); }
     await loadBoard();
   };
   const addCardTo = async (col: string, title: string) => {
@@ -227,10 +224,7 @@ export function App() {
   });
 
   useEffect(() => { document.querySelector(".row.selected")?.scrollIntoView({ block: "nearest" }); }, [selKey, data]);
-  useLayoutEffect(() => {
-    const el = listRef.current?.querySelector<HTMLElement>(".row.selected");
-    setGlide(el ? { y: el.offsetTop + 13, h: Math.max(8, el.offsetHeight - 26) } : null);
-  }, [selKey, data, view, leaving]);
+
 
   if (!data) return <div className="loading">Loading…</div>;
   const keys = data.ui.keys;
@@ -261,13 +255,18 @@ export function App() {
   };
 
   return (
-    <TipProvider>
+    <UiProvider>
     <div className="shell">
       <aside className="rail">
         <div className="brand"><i />Work Inbox{data.demo && <small>demo</small>}</div>
-        <button className={`nav ${view === "inbox" ? "on" : ""}`} onClick={() => setView("inbox")}>Inbox <span className="n">{flat.length}</span></button>
-        <button className={`nav ${view === "board" ? "on" : ""}`} onClick={() => setView("board")}>Board <span className="n">{board?.cards.length ?? 0}</span></button>
-        <button className={`nav ${view === "settings" ? "on" : ""}`} onClick={() => setView("settings")}>Settings</button>
+        <LayoutGroup id="nav">
+          {([["inbox", "Inbox", flat.length], ["board", "Board", board?.cards.length ?? 0], ["settings", "Settings", null]] as const).map(([v, label, n]) => (
+            <button key={v} className={`nav ${view === v ? "on" : ""}`} onClick={() => setView(v)}>
+              {view === v && <motion.span layoutId="navpill" className="navpill" transition={{ type: "spring", stiffness: 520, damping: 42 }} />}
+              <span className="navlabel">{label}</span>{n !== null && <span className="n">{n}</span>}
+            </button>
+          ))}
+        </LayoutGroup>
         <div className="spacer" />
         <button className={`health ${down.length ? "bad" : ""}`} onClick={() => setView("settings")} title={data.statuses.map((s) => `${SOURCE_LABEL[s.source]}: ${s.ok && !s.banner ? "ok" : s.banner ?? s.error}`).join("\n")}>
           <i />{down.length ? `${down.map((s) => SOURCE_LABEL[s.source]).join(", ")} down` : "all sources live"}
@@ -291,15 +290,16 @@ export function App() {
 
         {view === "inbox" && (
           <div className="split">
-            <div className="list" data-testid="list" ref={listRef}>
-              {glide && <span className="glide" style={{ transform: `translateY(${glide.y}px)`, height: glide.h }} />}
+            <div className="list" data-testid="list">
               {flat.length === 0 && <div className="empty">Nothing needs you right now.</div>}
               {groups.map((g) => {
                 let n = 0;
                 return (
                   <section key={g.id} className="group">
                     <h2>{g.title} <em>{g.items.length}</em></h2>
-                    {g.items.map((it) => <ObjectRow key={it.itemKey} item={it} now={data.now} index={n++} selected={it.itemKey === current?.itemKey} detail={mode === "verdict" ? "reason" : "why"} leaving={leaving[it.itemKey]} onClick={() => setSelKey(it.itemKey)} />)}
+                    <AnimatePresence mode="popLayout">
+                      {g.items.map((it) => <ObjectRow key={it.itemKey} item={it} now={data.now} index={n++} selected={it.itemKey === current?.itemKey} detail={mode === "verdict" ? "reason" : "why"} done={doneKey === it.itemKey} onClick={() => setSelKey(it.itemKey)} />)}
+                    </AnimatePresence>
                   </section>
                 );
               })}
@@ -320,7 +320,7 @@ export function App() {
         )}
 
         {view === "board" && board && (
-          <Board board={board} now={data.now} sel={selCard?.id ?? null} onSelect={setCardSel} onOpen={setDrawer} onMove={moveCardTo} onAdd={addCardTo} adding={adding} setAdding={setAdding} landed={landed} />
+          <Board board={board} now={data.now} sel={selCard?.id ?? null} onSelect={setCardSel} onOpen={setDrawer} onMove={moveCardTo} onAdd={addCardTo} adding={adding} setAdding={setAdding} />
         )}
       </div>
 
@@ -332,7 +332,15 @@ export function App() {
         )}
       </Drawer>
 
-      {toast && <div key={toast.text} className={`toast ${toast.error ? "err" : ""}`} role="status">{toast.text}{toast.undo && <button onClick={() => { toast.undo!(); setToast(null); }}>Undo</button>}</div>}
+      <AnimatePresence>
+        {toast && (
+          <motion.div key={toast.text} className={`toast ${toast.error ? "err" : ""}`} role="status" style={{ x: "-50%" }}
+            initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.97 }} transition={{ type: "spring", stiffness: 420, damping: 32 }}>
+            {toast.text}{toast.undo && <button onClick={() => { toast.undo!(); setToast(null); }}>Undo</button>}
+            <motion.span className="timer" initial={{ scaleX: 1 }} animate={{ scaleX: 0 }} transition={{ duration: toast.error ? 9 : 6, ease: "linear" }} />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <Modal open={modal?.kind === "transition"} onClose={() => setModal(null)} title={modal?.kind === "transition" ? `Move ${modal.item.ticketKey}` : ""}>
         {modal?.kind === "transition" && (
@@ -355,7 +363,7 @@ export function App() {
         <p className="dim">Code fetches and flags; Claude only judges and drafts. Nothing is ever sent to WhatsApp, and Jira is only written to after you confirm. Rebind keys in Settings.</p>
       </Modal>
     </div>
-    </TipProvider>
+    </UiProvider>
   );
 }
 

@@ -56,23 +56,36 @@ test.describe("Radix behaviour", () => {
   });
 });
 
-test.describe("micro-interactions", () => {
-  test("a gradient indicator glides to the selected row", async ({ page }) => {
-    const glide = page.locator(".glide");
-    await expect(glide).toBeVisible();
-    const y1 = (await glide.boundingBox())!.y;
-    await page.keyboard.press("j");
-    await page.waitForTimeout(450);
-    const y2 = (await glide.boundingBox())!.y;
-    expect(y2).toBeGreaterThan(y1);
+/** Samples a numeric value every animation frame until `ms` has passed, so mid-animation states can be asserted. */
+async function sample(page: Page, fn: string, ms = 700): Promise<number[]> {
+  return page.evaluate(async ({ fn, ms }) => {
+    const f = new Function("return (" + fn + ")()") as () => number;
+    const out: number[] = [];
+    const t0 = performance.now();
+    await new Promise<void>((done) => { const tick = () => { out.push(f()); performance.now() - t0 < ms ? requestAnimationFrame(tick) : done(); }; tick(); });
+    return out;
+  }, { fn, ms });
+}
+
+test.describe("micro-interactions (Motion)", () => {
+  test("the selection pill slides between rows instead of jumping", async ({ page }) => {
+    const y = () => `() => (document.querySelector(".rowsel")?.getBoundingClientRect().top ?? 0)`;
+    const before = await page.evaluate(`(${y()})()`) as number;
+    const [samples] = await Promise.all([sample(page, y(), 600), page.keyboard.press("j")]);
+    const after = samples.at(-1)!;
+    expect(after).toBeGreaterThan(before);
+    const mid = samples.filter((v) => v > before + 2 && v < after - 2);
+    expect(mid.length).toBeGreaterThan(0); // it passed through intermediate positions
   });
 
-  test("dismissing a row animates it out first", async ({ page }) => {
-    const seen = await watchClass(page, "leaving-out");
+  test("a dismissed row fades out and its siblings slide up (no jump)", async ({ page }) => {
     await page.click('[data-testid=list] .row:has-text("OPS-88")');
-    await page.keyboard.press("d");
+    const opacity = `() => { const r = [...document.querySelectorAll("[data-testid=list] .row")].find((e) => e.textContent.includes("OPS-88")); return r ? +getComputedStyle(r).opacity : 0; }`;
+    const siblingY = `() => { const r = [...document.querySelectorAll("[data-testid=list] .row")].find((e) => e.textContent.includes("API-90")); return r ? r.getBoundingClientRect().top : 0; }`;
+    const [ops, sib] = await Promise.all([sample(page, opacity, 700), sample(page, siblingY, 700), page.keyboard.press("d")]).then((r) => [r[0], r[1]]);
+    expect(ops.some((v) => v > 0.05 && v < 0.95)).toBe(true); // faded, not cut
+    expect(new Set(sib.map((v) => Math.round(v))).size).toBeGreaterThan(2); // the row below moved up gradually
     await expect(page.locator('[data-testid=list] .row:has-text("OPS-88")')).toHaveCount(0);
-    expect(await seen()).toBe(true);
   });
 
   test("copying a draft confirms itself", async ({ page, context }) => {
@@ -80,29 +93,47 @@ test.describe("micro-interactions", () => {
     await page.click('[data-testid=list] .row:has-text("Acme Support Group")');
     await page.getByRole("button", { name: /^Copy/ }).click();
     await expect(page.getByRole("button", { name: /Copied/ })).toBeVisible();
-    await expect(page.getByRole("button", { name: /^Copy/ })).toBeVisible({ timeout: 4000 }); // and resets
+    await expect(page.getByRole("button", { name: /^Copy/ })).toBeVisible({ timeout: 4000 });
   });
 
-  test("a dropped card settles and its stage answers", async ({ page }) => {
+  test("a dragged card travels to its new column (shared layout), not a jump", async ({ page }) => {
     await page.keyboard.press("2");
-    const seen = await watchClass(page, "landed");
-    await page.locator('.card:has-text("WEB-402")').dragTo(page.locator('.col[data-col="In Progress"] .cards'));
-    await expect(page.locator('.col[data-col="In Progress"]')).toContainText("WEB-402");
-    expect(await seen()).toBe(true);
+    const card = page.locator('.card:has-text("WEB-402")');
+    const x = `() => { const c = [...document.querySelectorAll(".card")].find((e) => e.textContent.includes("WEB-402")); return c ? c.getBoundingClientRect().left : 0; }`;
+    const start = (await card.boundingBox())!.x;
+    const [xs] = await Promise.all([sample(page, x, 900), card.dragTo(page.locator('.col[data-col="PR Review"] .cards'))]);
+    const end = xs.at(-1)!;
+    expect(end).toBeGreaterThan(start + 300);
+    expect(xs.some((v) => v > start + 20 && v < end - 20)).toBe(true);
   });
 
-  test("urgent icons pulse; the clock hand sweeps for overdue reminders", async ({ page }) => {
-    const glyph = page.locator('[data-testid=list] .row:has-text("Follow up on PAY-231") .glyph');
-    await expect(glyph).toHaveClass(/live/);
-    expect(await glyph.locator(".hand").evaluate((h) => getComputedStyle(h).animationName)).toBe("sweep");
+  test("the overdue reminder's clock hand keeps turning", async ({ page }) => {
+    const hand = `() => { const h = document.querySelector('[data-testid=list] .row .glyph.live path:last-child'); return h ? (new DOMMatrix(getComputedStyle(h).transform).b) : 0; }`;
+    const xs = await sample(page, hand, 900);
+    expect(new Set(xs.map((v) => v.toFixed(4))).size).toBeGreaterThan(1);
   });
 
-  test("reduced motion switches every animation off", async ({ page }) => {
+  test("the toast animates in and carries a shrinking timer", async ({ page }) => {
+    await page.click('[data-testid=list] .row:has-text("OPS-88")');
+    await page.keyboard.press("d");
+    const timer = page.locator(".toast .timer");
+    await expect(timer).toBeVisible();
+    const w1 = (await timer.boundingBox())!.width;
+    await page.waitForTimeout(700);
+    expect((await timer.boundingBox())!.width).toBeLessThan(w1);
+  });
+
+  test("reduced motion: transforms stop (clock hand stays put) and layout animations are instant", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.reload();
     await page.waitForSelector(".row");
-    const lamp = page.locator(".lamp.warn").first();
-    expect(await lamp.evaluate((l) => getComputedStyle(l).animationName)).toBe("none");
-    expect(await page.locator(".row").first().evaluate((r) => getComputedStyle(r).animationName)).toBe("none");
+    await page.waitForTimeout(500);
+    const hand = `() => { const h = document.querySelector('[data-testid=list] .row .glyph.live path:last-child'); return h ? (new DOMMatrix(getComputedStyle(h).transform).b) : 0; }`;
+    const xs = await sample(page, hand, 700);
+    expect(new Set(xs.map((v) => v.toFixed(4))).size).toBe(1);
+    const y = `() => (document.querySelector(".rowsel")?.getBoundingClientRect().top ?? 0)`;
+    const [samples] = await Promise.all([sample(page, y, 500), page.keyboard.press("j")]);
+    const before = samples[0]!, after = samples.at(-1)!;
+    expect(samples.filter((v) => v > before + 2 && v < after - 2).length).toBe(0); // no in-between frames
   });
 });

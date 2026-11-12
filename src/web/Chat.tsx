@@ -1,3 +1,4 @@
+import { motion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Keymap } from "../shared/keys";
 import type { InboxItem } from "../server/types";
@@ -61,7 +62,7 @@ export function Chat(p: ChatProps) {
   const summarise = (
     <div className="split-btn">
       <button disabled={never || p.busy === "summarize"} onClick={() => p.onSummarize(p.n)}>
-        {p.busy === "summarize" ? <>Summarising<span className="dots"><i /><i /><i /></span></> : <>Summarise {p.n}</>}
+        {p.busy === "summarize" ? <>Summarising<span className="dots">{[0, 1, 2].map((i) => <motion.i key={i} animate={{ y: [0, -3, 0], opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 1, delay: i * 0.15 }} />)}</span></> : <>Summarise {p.n}</>}
       </button>
       <Menu label="Summarise options" trigger="▾">
         <h5>Last messages</h5>
@@ -109,19 +110,20 @@ export function Chat(p: ChatProps) {
           <div key={i} style={{ display: "contents" }}>
             {day && <div className="day">{dayLabel(Number(day), now)}</div>}
             {run.msgs.map((m, j) => (
-              <div key={j} className={`msg ${run.mine ? "out" : "in"} ${j === 0 ? "first" : ""}`} data-testid={run.mine ? "msg-out" : "msg-in"} style={{ ["--i" as string]: Math.min(i * 3 + j, 12) }}>
+              <motion.div key={j} className={`msg ${run.mine ? "out" : "in"} ${j === 0 ? "first" : ""}`} data-testid={run.mine ? "msg-out" : "msg-in"}
+                initial={{ opacity: 0, y: 8, x: run.mine ? 10 : -10 }} animate={{ opacity: 1, y: 0, x: 0 }} transition={{ type: "spring", stiffness: 420, damping: 34, delay: Math.min(i * 3 + j, 12) * 0.022 }}>
                 {j === 0 && !run.mine && isGroup && <div className="who-name" style={{ color: personColor(run.author) }}>{run.author}</div>}
                 <div className={`bubble ${m.mention ? "mention" : ""}`}>{withMentions(m.body)}</div>
                 {j === run.msgs.length - 1 && <div className="stamp">{timeLabel(m.ts)}</div>}
-              </div>
+              </motion.div>
             ))}
           </div>
         ))}
         {item.draft && (
-          <div className="draftbubble" data-testid="draft">
-            <header>Draft · not sent <button className={`copy ${copied ? "copied" : ""}`} onClick={() => { p.onCopy(item.draft!); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }}>{copied ? <><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path className="check" pathLength="1" d="M3.5 8.5l3 3 6-7" /></svg> Copied</> : <>Copy <kbd>{p.keys.copy}</kbd></>}</button></header>
+          <motion.div className="draftbubble" data-testid="draft" initial={{ opacity: 0, y: 10, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 360, damping: 30, delay: 0.15 }}>
+            <header>Draft · not sent <button className={`copy ${copied ? "copied" : ""}`} onClick={() => { p.onCopy(item.draft!); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }}>{copied ? <><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><motion.path initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.3 }} d="M3.5 8.5l3 3 6-7" /></svg> Copied</> : <>Copy <kbd>{p.keys.copy}</kbd></>}</button></header>
             <div>{item.draft}</div>
-          </div>
+          </motion.div>
         )}
       </div>
       <div className="composer">
