@@ -12,11 +12,11 @@ interface Props {
   board: BoardData; now: number; sel: number | null;
   onSelect: (id: number) => void; onOpen: (id: number) => void;
   onMove: (id: number, col: string, index: number) => void; onAdd: (col: string, title: string) => void;
-  adding: string | null; setAdding: (col: string | null) => void;
+  adding: string | null; setAdding: (col: string | null) => void; landed?: { id: number; col: string } | null;
 }
 
 /** The pipeline reads as one thread with a node per stage; cards sit under the stage they have reached. */
-export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding, setAdding }: Props) {
+export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding, setAdding, landed }: Props) {
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<{ col: string; index: number } | null>(null);
   const colRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -34,7 +34,7 @@ export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding
         {board.columns.map((col) => {
           const cards = board.cards.filter((c) => c.col === col);
           return (
-            <div key={col} className={`col ${over?.col === col ? "over" : ""}`} data-col={col}
+            <div key={col} className={`col ${over?.col === col ? "over" : ""} ${landed?.col === col ? "landed-col" : ""}`} data-col={col}
               onDragOver={(e) => { e.preventDefault(); setOver({ col, index: indexAt(col, e.clientY) }); }}
               onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver((o) => (o?.col === col ? null : o)); }}
               onDrop={(e) => { e.preventDefault(); const id = Number(e.dataTransfer.getData("text/plain")) || drag; if (id) onMove(id, col, indexAt(col, e.clientY)); setDrag(null); setOver(null); }}>
@@ -57,11 +57,11 @@ export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding
                   return (
                     <div key={c.id} style={{ display: "contents" }}>
                       {over?.col === col && over.index === i && <div className="drop-line" />}
-                      <button data-card={c.id} className={`card ${sel === c.id ? "selected" : ""} ${drag === c.id ? "dragging" : ""}`} draggable
+                      <button data-card={c.id} className={`card ${sel === c.id ? "selected" : ""} ${drag === c.id ? "dragging" : ""} ${landed?.id === c.id ? "landed" : ""}`} draggable
                         onDragStart={(e) => { e.dataTransfer.setData("text/plain", String(c.id)); e.dataTransfer.effectAllowed = "move"; setDrag(c.id); }}
                         onDragEnd={() => { setDrag(null); setOver(null); }}
                         onClick={() => onSelect(c.id)} onDoubleClick={() => onOpen(c.id)}>
-                        <div className="ct"><Glyph kind={kindOf(c.itemKey)} /><span>{c.title}</span></div>
+                        <div className="ct"><Glyph kind={kindOf(c.itemKey)} live={w?.tone === "warn"} /><span>{c.title}</span></div>
                         {c.notes && <div className="cn">{c.notes}</div>}
                         <div className="cm">
                           {c.ticketKey && <span className="key">{c.ticketKey}</span>}

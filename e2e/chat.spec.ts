@@ -39,10 +39,10 @@ test("auto chat shows a collapsible summary; presets and custom size live in one
   await expect(summary.locator("li")).toHaveCount(2);
   await openOptions(page);
   const panel = page.getByRole("dialog", { name: "Summarise options" });
-  await panel.getByRole("button", { name: "100", exact: true }).click();
+  await panel.getByRole("radio", { name: /^100/ }).click();
   await expect(summariseBtn(page)).toContainText("Summarise 100");
   await panel.getByRole("button", { name: "make 100 the default" }).click();
-  await expect(panel.locator(".seg button:has-text('100') i")).toBeVisible();
+  await expect(panel.getByRole("radio", { name: /^100/ }).locator("i")).toBeVisible();
   await panel.getByPlaceholder("custom").fill("37");
   await expect(summariseBtn(page)).toContainText("Summarise 37");
   await page.keyboard.press("Escape");
@@ -52,11 +52,11 @@ test("auto chat shows a collapsible summary; presets and custom size live in one
 test("per-chat Claude mode: Never disables summarising; w cycles the mode", async ({ page }) => {
   await openOptions(page);
   const panel = page.getByRole("dialog", { name: "Summarise options" });
-  await panel.getByRole("button", { name: "Never", exact: true }).click();
+  await panel.getByRole("radio", { name: "Never" }).click();
   await expect(page.locator(".toast")).toContainText("will not be sent to Claude");
   await expect(summariseBtn(page)).toBeDisabled();
   await expect(page.locator(".modeflag.never")).toBeVisible();
-  await panel.getByRole("button", { name: "Manual", exact: true }).click();
+  await panel.getByRole("radio", { name: "Manual" }).click();
   await expect(summariseBtn(page)).toBeEnabled();
   await page.keyboard.press("Escape");
   await page.keyboard.press("w"); // manual -> auto

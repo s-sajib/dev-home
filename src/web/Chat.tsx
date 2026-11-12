@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Keymap } from "../shared/keys";
 import type { InboxItem } from "../server/types";
 import { ago, dayLabel, initials, personColor, timeLabel } from "./format";
-import { Lamp, Pop, Verbs, why, type Verb } from "./objects";
+import { Lamp, Verbs, why, type Verb } from "./objects";
+import { Menu, Segmented } from "./ui";
 
 export type LlmMode = "manual" | "auto" | "never";
 export interface SummaryDto { n: number; summary: string; actionItems: string[]; replyNeeded: boolean; sensitive: boolean; createdAt: number }
@@ -49,6 +50,7 @@ export function Chat(p: ChatProps) {
   const convo = useRef<HTMLDivElement>(null);
   const [custom, setCustom] = useState("");
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   useEffect(() => setOpen(false), [item.itemKey]);
   useEffect(() => { const el = convo.current; if (el) el.scrollTop = el.scrollHeight; }, [item.itemKey, item.events.length, item.draft]);
   const runs = toRuns(item.events);
@@ -58,21 +60,22 @@ export function Chat(p: ChatProps) {
 
   const summarise = (
     <div className="split-btn">
-      <button disabled={never || p.busy === "summarize"} onClick={() => p.onSummarize(p.n)}>{p.busy === "summarize" ? "Summarising…" : <>Summarise {p.n}<kbd>{p.keys.summarize}</kbd></>}</button>
-      <Pop label="Summarise options" trigger="▾">
+      <button disabled={never || p.busy === "summarize"} onClick={() => p.onSummarize(p.n)}>
+        {p.busy === "summarize" ? <>Summarising<span className="dots"><i /><i /><i /></span></> : <>Summarise {p.n}</>}
+      </button>
+      <Menu label="Summarise options" trigger="▾">
         <h5>Last messages</h5>
-        <div className="seg">
-          {p.presets.map((x) => <button key={x} className={p.n === x ? "on" : ""} disabled={never} onClick={() => p.setN(x)}>{x}{x === p.defaultN && <i title="default"> ★</i>}</button>)}
+        <Segmented label="Number of messages" value={p.presets.includes(p.n) ? String(p.n) : undefined} disabled={never} onChange={(v) => { setCustom(""); p.setN(Number(v)); }}
+          items={p.presets.map((x) => ({ value: String(x), label: <>{x}{x === p.defaultN && <i title="default"> ★</i>}</> }))}>
           <input className={isCustom ? "on" : ""} placeholder="custom" inputMode="numeric" value={custom} disabled={never}
             onChange={(e) => { const d = e.target.value.replace(/\D/g, ""); setCustom(d); if (Number(d) > 0) p.setN(Math.min(Number(d), 500)); }} />
-        </div>
+        </Segmented>
         {p.n !== p.defaultN && <p className="help"><button className="link" onClick={() => p.onDefault(p.n)}>make {p.n} the default</button></p>}
         <h5>Claude may read this chat</h5>
-        <div className="seg">
-          {(["manual", "auto", "never"] as const).map((m) => <button key={m} className={item.llmMode === m ? `on ${m}` : ""} onClick={() => p.onMode(m)}>{m[0]!.toUpperCase() + m.slice(1)}</button>)}
-        </div>
+        <Segmented label="Claude access" value={item.llmMode ?? "manual"} onChange={p.onMode}
+          items={(["manual", "auto", "never"] as const).map((m) => ({ value: m, label: m[0]!.toUpperCase() + m.slice(1), tone: m }))} />
         <p className="help">{MODE_HELP[item.llmMode ?? "manual"]} <kbd>{p.keys.mode}</kbd></p>
-      </Pop>
+      </Menu>
     </div>
   );
 
@@ -106,7 +109,7 @@ export function Chat(p: ChatProps) {
           <div key={i} style={{ display: "contents" }}>
             {day && <div className="day">{dayLabel(Number(day), now)}</div>}
             {run.msgs.map((m, j) => (
-              <div key={j} className={`msg ${run.mine ? "out" : "in"} ${j === 0 ? "first" : ""}`} data-testid={run.mine ? "msg-out" : "msg-in"}>
+              <div key={j} className={`msg ${run.mine ? "out" : "in"} ${j === 0 ? "first" : ""}`} data-testid={run.mine ? "msg-out" : "msg-in"} style={{ ["--i" as string]: Math.min(i * 3 + j, 12) }}>
                 {j === 0 && !run.mine && isGroup && <div className="who-name" style={{ color: personColor(run.author) }}>{run.author}</div>}
                 <div className={`bubble ${m.mention ? "mention" : ""}`}>{withMentions(m.body)}</div>
                 {j === run.msgs.length - 1 && <div className="stamp">{timeLabel(m.ts)}</div>}
@@ -116,7 +119,7 @@ export function Chat(p: ChatProps) {
         ))}
         {item.draft && (
           <div className="draftbubble" data-testid="draft">
-            <header>Draft · not sent <button className="copy" onClick={() => p.onCopy(item.draft!)}>Copy <kbd>{p.keys.copy}</kbd></button></header>
+            <header>Draft · not sent <button className={`copy ${copied ? "copied" : ""}`} onClick={() => { p.onCopy(item.draft!); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }}>{copied ? <><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path className="check" pathLength="1" d="M3.5 8.5l3 3 6-7" /></svg> Copied</> : <>Copy <kbd>{p.keys.copy}</kbd></>}</button></header>
             <div>{item.draft}</div>
           </div>
         )}

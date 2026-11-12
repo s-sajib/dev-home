@@ -104,7 +104,7 @@ kbd { font: 500 11px var(--font-mono); background: var(--fill); box-shadow: inse
 .row { position: relative; display: grid; grid-template-columns: 16px 1fr auto; align-items: start; gap: 12px; width: 100%; text-align: left; border: 0; background: none; padding: 11px 14px; border-radius: var(--r-in); transition: background .2s var(--ease); animation: rise .55s var(--ease) both; animation-delay: calc(var(--i, 0) * 30ms); }
 .row .glyph { margin-top: 3px; } .row:hover { background: var(--fill); }
 .row.selected { background: var(--surface); box-shadow: var(--card); }
-.row.selected::before { content: ""; position: absolute; left: 0; top: 13px; bottom: 13px; width: 2px; border-radius: 2px; background: var(--grad); }
+.list { position: relative; } .glide { position: absolute; left: 8px; top: 0; width: 2px; border-radius: 2px; background: var(--grad); transition: transform .32s var(--ease), height .32s var(--ease); z-index: 3; pointer-events: none; }
 .row .t { font-weight: 560; line-height: 1.3; letter-spacing: -.005em; } .row .why { color: var(--ink-3); font-size: 13px; margin-top: 3px; }
 .row .when { font: 400 11px var(--font-mono); color: var(--ink-3); padding-top: 3px; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
@@ -116,8 +116,6 @@ kbd { font: 500 11px var(--font-mono); background: var(--fill); box-shadow: inse
 .verbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 4px; margin: 18px 0 4px; }
 .verb { display: inline-flex; align-items: center; gap: 7px; border: 0; background: none; padding: 6px 10px; border-radius: 99px; color: var(--ink-2); font-size: 13.5px; transition: background .2s var(--ease), color .2s; }
 .verb:hover { background: var(--fill); color: var(--ink); } .verb.primary { background: var(--ink); color: var(--bg); font-weight: 560; margin-right: 6px; } .verb.primary:hover { opacity: .9; }
-.verb { position: relative; } .verb kbd { display: none; position: absolute; left: 50%; top: calc(100% + 2px); transform: translateX(-50%); pointer-events: none; margin: 0; z-index: 5; } .verb:hover kbd, .verb:focus-visible kbd { display: inline-block; }
-.verb.primary kbd { color: var(--ink-2); }
 .section { margin-top: 30px; } .section h4 { margin: 0 0 8px; font: 500 10.5px var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
 .rel .row { padding: 8px 10px; margin-left: -10px; animation: none; }
 .thread { list-style: none; margin: 0; padding: 0 0 0 18px; border-left: 1px solid var(--rim-strong); display: grid; gap: 18px; }
@@ -129,14 +127,14 @@ kbd { font: 500 11px var(--font-mono); background: var(--fill); box-shadow: inse
 
 /* ───────── Popover ───────── */
 .pop { position: relative; display: inline-flex; } .pop .caret { border: 0; background: none; padding: 0; }
-.panel { position: absolute; z-index: 30; top: calc(100% + 8px); min-width: 280px; padding: 16px; border-radius: var(--r-in); background: var(--surface-hover); box-shadow: var(--card), 0 24px 60px -16px #000b; animation: rise .25s var(--ease); }
-.panel.left { left: 0; } .panel.right { right: 0; }
+.panel { z-index: 60; min-width: 290px; outline: none; padding: 16px; border-radius: var(--r-in); background: var(--surface-hover); box-shadow: var(--card), 0 24px 60px -16px #000b; }
+.panel[data-state=open] { animation: rise .22s var(--ease); } .panel[data-state=closed] { animation: fade .12s reverse forwards; }
 .panel h5 { margin: 0 0 8px; font: 500 10.5px var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); } .panel h5:not(:first-child) { margin-top: 16px; }
 .panel .help { color: var(--ink-3); font-size: 12.5px; margin-top: 6px; }
 .seg { display: inline-flex; background: var(--fill); border-radius: 99px; padding: 2px; box-shadow: inset 0 0 0 1px var(--rim); }
 .seg button, .seg input { border: 0; background: none; border-radius: 99px; padding: 3px 11px; color: var(--ink-2); font-size: 12.5px; transition: background .2s var(--ease), color .2s; }
-.seg input { width: 74px; text-align: center; font-family: var(--font-mono); outline: none; color: var(--ink); } .seg button:hover { color: var(--ink); } .seg .on { background: var(--ink); color: var(--bg); font-weight: 560; }
-.seg .on.auto { background: var(--good); color: #0c2417; } .seg .on.never { background: var(--bad); color: #2b0d07; } .seg i { font-style: normal; color: var(--lamp); }
+.seg input { width: 74px; text-align: center; font-family: var(--font-mono); outline: none; color: var(--ink); } .seg button:hover { color: var(--ink); } .seg [data-state=on], .seg input.on { background: var(--ink); color: var(--bg); font-weight: 560; }
+.seg [data-state=on].auto { background: var(--good); color: #0c2417; } .seg [data-state=on].never { background: var(--bad); color: #2b0d07; } .seg i { font-style: normal; color: var(--lamp); }
 .link { background: none; border: 0; color: var(--accent-text); font-size: 12.5px; padding: 0; } .link:hover { text-decoration: underline; }
 .split-btn { display: inline-flex; margin-right: 6px; border-radius: 99px; background: var(--ink); color: var(--bg); }
 .split-btn > button { border: 0; background: none; color: inherit; padding: 6px 12px; font-size: 13.5px; font-weight: 560; } .split-btn > button:disabled { opacity: .5; }
@@ -191,14 +189,16 @@ kbd { font: 500 11px var(--font-mono); background: var(--fill); box-shadow: inse
 .drop-line { height: 3px; border-radius: 3px; background: var(--accent); margin: -3px 0; box-shadow: 0 0 10px var(--accent); }
 .empty-col { margin: 6px 0; padding: 14px 8px; text-align: center; font: 400 11px var(--font-mono); color: var(--ink-3); opacity: .6; }
 .newcard { margin: 0 2px 10px; } .newcard input { width: 100%; background: var(--surface); border: 0; border-radius: 12px; padding: 9px 12px; font: inherit; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--accent); outline: none; }
-.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(580px, 94vw); z-index: 40; background: var(--bg); box-shadow: -24px 0 60px -20px #0009, inset 1px 0 0 var(--rim-strong); padding: 26px 28px 40px; overflow-y: auto; animation: slide .3s var(--ease); }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(580px, 94vw); z-index: 51; background: var(--bg); box-shadow: -24px 0 60px -20px #0009, inset 1px 0 0 var(--rim-strong); padding: 26px 28px 40px; overflow-y: auto; }
+.drawer[data-state=open] { animation: slide .3s var(--ease); } .drawer[data-state=closed] { animation: slide .2s var(--ease) reverse forwards; }
 @keyframes slide { from { transform: translateX(24px); opacity: 0; } }
 .drawer .x { position: absolute; top: 16px; right: 18px; }
 .drawer textarea, .drawer input.tt { width: 100%; background: var(--surface); border: 0; box-shadow: var(--card); border-radius: var(--r-in); padding: 10px 12px; font: inherit; color: var(--ink); resize: vertical; } .drawer input.tt { font-size: 22px; font-weight: 620; margin: 10px 0 14px; letter-spacing: -.02em; }
 
 /* ───────── Overlays, toast ───────── */
-.overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: color-mix(in srgb, #000 55%, transparent); backdrop-filter: blur(3px); }
-.sheet { min-width: 420px; max-width: 520px; background: var(--surface); border-radius: var(--r); padding: 24px 28px; box-shadow: var(--card), 0 30px 80px -20px #000c; } .sheet h3 { margin: 0 0 12px; letter-spacing: -.01em; }
+.overlay { position: fixed; inset: 0; z-index: 50; background: color-mix(in srgb, #000 55%, transparent); backdrop-filter: blur(3px); } .overlay.light { background: color-mix(in srgb, #000 28%, transparent); backdrop-filter: none; }
+.overlay[data-state=open] { animation: fade .2s var(--ease); } .overlay[data-state=closed] { animation: fade .16s var(--ease) reverse forwards; }
+.sheet { position: fixed; z-index: 51; left: 50%; top: 50%; transform: translate(-50%, -50%); min-width: 420px; max-width: 520px; background: var(--surface); border-radius: var(--r); padding: 24px 28px; box-shadow: var(--card), 0 30px 80px -20px #000c; } .sheet h3 { margin: 0 0 12px; letter-spacing: -.01em; }
 .sheet textarea { width: 100%; min-height: 120px; background: var(--fill); color: var(--ink); border: 0; border-radius: var(--r-in); padding: 10px; font: inherit; box-shadow: inset 0 0 0 1px var(--rim); }
 .choices { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 6px; } .choices li { padding: 8px 12px; border-radius: 10px; background: var(--fill); } .choices li.picked { box-shadow: inset 0 0 0 2px var(--accent); }
 .toast { position: fixed; z-index: 60; bottom: 26px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 18px; border-radius: 99px; display: flex; gap: 14px; align-items: center; font-size: 13.5px; font-weight: 520; box-shadow: 0 16px 40px -12px #000b; animation: pop .28s var(--ease); }
@@ -232,3 +232,61 @@ kbd { font: 500 11px var(--font-mono); background: var(--fill); box-shadow: inse
 .summary .link { margin-top: 4px; }
 .card .cn { color: var(--ink-3); font-size: 12.5px; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .empty-col { margin: 6px 4px; padding: 18px 8px; text-align: center; font: 400 11px var(--font-mono); color: var(--ink-3); border: 1px dashed var(--rim-strong); border-radius: 12px; opacity: .7; }
+
+/* ───────── Radix parts ───────── */
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sheet[data-state=open] { animation: sheet-in .24s var(--ease); } .sheet[data-state=closed] { animation: sheet-in .16s var(--ease) reverse forwards; }
+@keyframes sheet-in { from { opacity: 0; transform: translate(-50%, calc(-50% + 10px)) scale(.985); } }
+@keyframes fade { from { opacity: 0; } }
+.tip { z-index: 80; display: inline-flex; align-items: center; gap: 8px; padding: 5px 9px; border-radius: 8px; background: var(--ink); color: var(--bg); font-size: 12px; box-shadow: 0 10px 30px -8px #000a; animation: fade .15s var(--ease); }
+.tip kbd { background: color-mix(in srgb, var(--bg) 18%, transparent); color: var(--bg); box-shadow: none; }
+.switch { all: unset; position: relative; width: 36px; height: 21px; border-radius: 99px; background: var(--fill-2); box-shadow: inset 0 0 0 1px var(--rim); cursor: pointer; transition: background .25s var(--ease); flex: none; }
+.switch[data-state=checked] { background: var(--accent); } .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch .thumb { display: block; width: 15px; height: 15px; margin: 3px; border-radius: 50%; background: var(--surface-hover); box-shadow: 0 1px 3px #0006; transition: transform .28s var(--ease); }
+.switch[data-state=checked] .thumb { transform: translateX(15px); background: var(--on-accent); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ───────── Motion: few, quiet, purposeful ───────── */
+.lamp.warn { animation: breathe 3.4s ease-in-out infinite; }
+@keyframes breathe { 50% { box-shadow: 0 0 4px 0 var(--lamp); opacity: .8; } }
+.row, .verb, .nav, .pill, .go, .copy { -webkit-tap-highlight-color: transparent; }
+.verb:active, .nav:active, .pill:active, .split-btn > button:active, .copy:active { transform: scale(.97); }
+.verb, .nav, .pill { transition: background .2s var(--ease), color .2s, transform .12s var(--ease), box-shadow .2s var(--ease); }
+.verb.primary:hover { transform: translateY(-1px); }
+
+/* icons draw and turn when you look at them */
+.glyph .draw { stroke-dasharray: 1; stroke-dashoffset: 0; }
+.row:hover .glyph .draw, .card:hover .glyph .draw, .row.selected .glyph .draw { animation: draw .55s var(--ease); }
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.glyph .node { transform-box: fill-box; transform-origin: center; }
+.row:hover .glyph .node, .card:hover .glyph .node { animation: node-pop .5s var(--ease) both; } .glyph .node:nth-child(2) { animation-delay: .08s !important; } .glyph .node:nth-child(3) { animation-delay: .16s !important; }
+@keyframes node-pop { 40% { transform: scale(1.5); } }
+.glyph .bubble-g { transform-box: fill-box; transform-origin: 30% 100%; }
+.row:hover .glyph .bubble-g, .card:hover .glyph .bubble-g { animation: wiggle .5s var(--ease); }
+@keyframes wiggle { 30% { transform: rotate(-7deg) translateY(-1px); } 60% { transform: rotate(4deg); } }
+.glyph .hand { transform-box: view-box; transform-origin: 8px 8px; }
+.row:hover .glyph .hand, .card:hover .glyph .hand { animation: sweep .9s var(--ease); } .glyph.live .hand { animation: sweep 24s linear infinite; }
+@keyframes sweep { to { transform: rotate(360deg); } }
+.glyph .gem { transform-box: fill-box; transform-origin: center; transition: transform .45s var(--ease); }
+.card:hover .glyph .gem, .row:hover .glyph .gem { transform: rotate(90deg); }
+.glyph .check { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw .4s .08s var(--ease) forwards; }
+.glyph.is-done { color: var(--good); }
+
+/* rows leave gracefully; completing a reminder draws a check first */
+.row.leaving-out { animation: leave .23s var(--ease) forwards; } .row.leaving-done { animation: leave .26s .3s var(--ease) forwards; }
+@keyframes leave { to { opacity: 0; transform: translateX(-12px); } }
+
+/* conversation: bubbles settle in, copy confirms itself */
+.msg, .draftbubble { animation: rise .4s var(--ease) both; animation-delay: calc(var(--i, 0) * 22ms); }
+.draftbubble .copy { transition: background .25s var(--ease), transform .12s var(--ease); } .draftbubble .copy.copied { background: var(--good); color: #0c2417; } .draftbubble .copy svg { vertical-align: -1px; }
+.dots { display: inline-flex; gap: 3px; margin-left: 5px; vertical-align: middle; } .dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: bob 1s ease-in-out infinite; } .dots i:nth-child(2) { animation-delay: .15s; } .dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes bob { 0%, 70%, 100% { transform: translateY(0); opacity: .5; } 35% { transform: translateY(-3px); opacity: 1; } }
+
+/* board: cards settle where they land, the stage node answers */
+.card.landed { animation: settle .55s var(--ease); } @keyframes settle { 0% { transform: scale(1.04); box-shadow: inset 0 0 0 1.5px var(--accent), 0 14px 30px -12px var(--accent); } 100% { transform: scale(1); } }
+.col.landed-col header i { animation: ping .7s var(--ease); } @keyframes ping { 0% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 0 var(--accent); } 100% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 12px transparent; } }
+.card:active { cursor: grabbing; transform: scale(1.02) rotate(.6deg); }
+
+/* toast carries its own timer */
+.toast { overflow: hidden; } .toast::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: currentColor; opacity: .35; transform-origin: left; animation: timer 6s linear forwards; } .toast.err::after { animation-duration: 9s; }
+@keyframes timer { to { transform: scaleX(0); } }

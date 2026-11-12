@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ACTIONS, type ActionId, type Keymap } from "../shared/keys";
 import type { SourceStatus } from "../server/types";
 import { Board, type BoardCard, type BoardData } from "./Board";
@@ -6,6 +6,7 @@ import { Chat, type Item, type LlmMode } from "./Chat";
 import { SOURCE_LABEL, VERDICT_LABEL, ago, buildGroups } from "./format";
 import { Glyph, KIND_LABEL, Lamp, ObjectRow, Verbs, kindOf, related, urlsOf, verbsFor, why, type Ops } from "./objects";
 import { Settings } from "./Settings";
+import { Drawer, Modal, TipProvider } from "./ui";
 
 interface InboxResponse {
   now: number; items: Item[]; hiddenCount: number; statuses: SourceStatus[];
@@ -32,6 +33,10 @@ export function App() {
   const [grouping, setGrouping] = useState<"auto" | "verdict" | "lane" | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [sumN, setSumN] = useState<number | null>(null);
+  const [leaving, setLeaving] = useState<Record<string, "out" | "done">>({});
+  const [landed, setLanded] = useState<{ id: number; col: string } | null>(null);
+  const [glide, setGlide] = useState<{ y: number; h: number } | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => setData(await (await fetch("/api/inbox")).json()), []);
@@ -75,9 +80,12 @@ export function App() {
     if (!item) return;
     const key = item.itemKey;
     const nextKey = flat[idx + 1]?.itemKey ?? flat[idx - 1]?.itemKey ?? null;
+    const exits = ["dismiss", "snooze", "complete"].includes(action) && view === "inbox";
+    if (exits) { setLeaving((l) => ({ ...l, [key]: action === "complete" ? "done" : "out" })); await new Promise((r) => setTimeout(r, action === "complete" ? 520 : 230)); }
     setBusy(action);
     const r = await post(key, action, body);
     setBusy(null);
+    if (exits) setLeaving((l) => { const n = { ...l }; delete n[key]; return n; });
     if (!r.ok) { say(r.error ?? "Failed", { error: true }); return r; }
     if (okText) say(okText, undoable ? { undo: async () => { await post(key, "restore"); await load(); } } : {});
     if (["dismiss", "snooze"].includes(action) && key === current?.itemKey) setSelKey(nextKey);
@@ -129,6 +137,7 @@ export function App() {
   const moveCardTo = async (id: number, col: string, index?: number) => {
     const r = await (await fetch(`/api/board/cards/${id}`, json("PATCH", { col, index }))).json();
     if (!r.ok) say(r.error ?? "Could not move the card", { error: true });
+    else { setLanded({ id, col }); window.setTimeout(() => setLanded(null), 700); }
     await loadBoard();
   };
   const addCardTo = async (col: string, title: string) => {
@@ -218,6 +227,10 @@ export function App() {
   });
 
   useEffect(() => { document.querySelector(".row.selected")?.scrollIntoView({ block: "nearest" }); }, [selKey, data]);
+  useLayoutEffect(() => {
+    const el = listRef.current?.querySelector<HTMLElement>(".row.selected");
+    setGlide(el ? { y: el.offsetTop + 13, h: Math.max(8, el.offsetHeight - 26) } : null);
+  }, [selKey, data, view, leaving]);
 
   if (!data) return <div className="loading">Loading…</div>;
   const keys = data.ui.keys;
@@ -248,6 +261,7 @@ export function App() {
   };
 
   return (
+    <TipProvider>
     <div className="shell">
       <aside className="rail">
         <div className="brand"><i />Work Inbox{data.demo && <small>demo</small>}</div>
@@ -277,14 +291,15 @@ export function App() {
 
         {view === "inbox" && (
           <div className="split">
-            <div className="list" data-testid="list">
+            <div className="list" data-testid="list" ref={listRef}>
+              {glide && <span className="glide" style={{ transform: `translateY(${glide.y}px)`, height: glide.h }} />}
               {flat.length === 0 && <div className="empty">Nothing needs you right now.</div>}
               {groups.map((g) => {
                 let n = 0;
                 return (
                   <section key={g.id} className="group">
                     <h2>{g.title} <em>{g.items.length}</em></h2>
-                    {g.items.map((it) => <ObjectRow key={it.itemKey} item={it} now={data.now} index={n++} selected={it.itemKey === current?.itemKey} detail={mode === "verdict" ? "reason" : "why"} onClick={() => setSelKey(it.itemKey)} />)}
+                    {g.items.map((it) => <ObjectRow key={it.itemKey} item={it} now={data.now} index={n++} selected={it.itemKey === current?.itemKey} detail={mode === "verdict" ? "reason" : "why"} leaving={leaving[it.itemKey]} onClick={() => setSelKey(it.itemKey)} />)}
                   </section>
                 );
               })}
@@ -305,43 +320,42 @@ export function App() {
         )}
 
         {view === "board" && board && (
-          <Board board={board} now={data.now} sel={selCard?.id ?? null} onSelect={setCardSel} onOpen={setDrawer} onMove={moveCardTo} onAdd={addCardTo} adding={adding} setAdding={setAdding} />
+          <Board board={board} now={data.now} sel={selCard?.id ?? null} onSelect={setCardSel} onOpen={setDrawer} onMove={moveCardTo} onAdd={addCardTo} adding={adding} setAdding={setAdding} landed={landed} />
         )}
       </div>
 
-      {drawerCard && (
-        <aside className="drawer" data-testid="drawer">
-          <button className="pill x" onClick={() => setDrawer(null)}>Close</button>
+      <Drawer open={!!drawerCard} onClose={() => setDrawer(null)} title={drawerCard?.title ?? "Card"}>
+        {drawerCard && (
           <CardDrawer card={drawerCard} item={data.items.find((i) => i.itemKey === drawerCard.itemKey)} now={data.now} keys={keys} ops={(i) => opsFor(i)} relatedNode={relatedNode}
             onSave={async (patch) => { await fetch(`/api/board/cards/${drawerCard.id}`, json("PATCH", patch)); await loadBoard(); }}
             onDelete={async () => { await fetch(`/api/board/cards/${drawerCard.id}`, json("DELETE")); setDrawer(null); await loadBoard(); say("Card removed."); }} />
-        </aside>
-      )}
+        )}
+      </Drawer>
 
-      {toast && <div className={`toast ${toast.error ? "err" : ""}`} role="status">{toast.text}{toast.undo && <button onClick={() => { toast.undo!(); setToast(null); }}>Undo</button>}</div>}
+      {toast && <div key={toast.text} className={`toast ${toast.error ? "err" : ""}`} role="status">{toast.text}{toast.undo && <button onClick={() => { toast.undo!(); setToast(null); }}>Undo</button>}</div>}
 
-      {modal?.kind === "transition" && (
-        <div className="overlay"><div className="sheet">
-          <h3>Move {modal.item.ticketKey}</h3>
-          <ol className="choices">{data.transitions.map((t, i) => <li key={t} className={modal.picked === t ? "picked" : ""}><kbd>{i + 1}</kbd> {t}</li>)}</ol>
-          <p className="dim">{modal.picked ? <>Press <kbd>Enter</kbd> to confirm moving to <b>{modal.picked}</b>, or <kbd>Esc</kbd> to cancel.</> : "Pick a status. Nothing is written to Jira until you confirm."}</p>
-        </div></div>
-      )}
-      {modal?.kind === "comment" && (
-        <div className="overlay"><div className="sheet">
-          <h3>Comment on {modal.item.ticketKey}</h3>
-          <textarea autoFocus value={modal.text} onChange={(e) => setModal({ ...modal, text: e.target.value })} placeholder="Write a comment…" />
-          <p className="dim"><kbd>⌘</kbd> <kbd>Enter</kbd> posts to Jira · <kbd>Esc</kbd> cancels</p>
-        </div></div>
-      )}
-      {modal?.kind === "help" && (
-        <div className="overlay" onClick={() => setModal(null)}><div className="sheet" style={{ maxWidth: 640 }}>
-          <h3>Keys</h3>
-          <div className="keygrid">{(Object.keys(ACTIONS) as ActionId[]).map((a) => <div key={a} className="keyrow"><span>{ACTIONS[a].label}</span><kbd>{keys[a]}</kbd></div>)}</div>
-          <p className="dim">Code fetches and flags; Claude only judges and drafts. Nothing is ever sent to WhatsApp, and Jira is only written to after you confirm. Rebind keys in Settings.</p>
-        </div></div>
-      )}
+      <Modal open={modal?.kind === "transition"} onClose={() => setModal(null)} title={modal?.kind === "transition" ? `Move ${modal.item.ticketKey}` : ""}>
+        {modal?.kind === "transition" && (
+          <>
+            <ol className="choices">{data.transitions.map((t, i) => <li key={t} className={modal.picked === t ? "picked" : ""}><kbd>{i + 1}</kbd> {t}</li>)}</ol>
+            <p className="dim">{modal.picked ? <>Press <kbd>Enter</kbd> to confirm moving to <b>{modal.picked}</b>, or <kbd>Esc</kbd> to cancel.</> : "Pick a status. Nothing is written to Jira until you confirm."}</p>
+          </>
+        )}
+      </Modal>
+      <Modal open={modal?.kind === "comment"} onClose={() => setModal(null)} title={modal?.kind === "comment" ? `Comment on ${modal.item.ticketKey}` : ""}>
+        {modal?.kind === "comment" && (
+          <>
+            <textarea autoFocus value={modal.text} onChange={(e) => setModal({ ...modal, text: e.target.value })} placeholder="Write a comment…" />
+            <p className="dim"><kbd>⌘</kbd> <kbd>Enter</kbd> posts to Jira · <kbd>Esc</kbd> cancels</p>
+          </>
+        )}
+      </Modal>
+      <Modal open={modal?.kind === "help"} onClose={() => setModal(null)} title="Keys" wide>
+        <div className="keygrid">{(Object.keys(ACTIONS) as ActionId[]).map((a) => <div key={a} className="keyrow"><span>{ACTIONS[a].label}</span><kbd>{keys[a]}</kbd></div>)}</div>
+        <p className="dim">Code fetches and flags; Claude only judges and drafts. Nothing is ever sent to WhatsApp, and Jira is only written to after you confirm. Rebind keys in Settings.</p>
+      </Modal>
     </div>
+    </TipProvider>
   );
 }
 

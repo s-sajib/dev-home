@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ACTIONS, type ActionId, type Keymap } from "../shared/keys";
+import { Toggle } from "./ui";
 
 type Source = "default" | "env" | "saved";
 interface Field {
@@ -109,7 +110,7 @@ function Editor({ f, onSave, onClear }: { f: Field; onSave: (v: unknown) => Prom
 
   switch (f.type) {
     case "bool":
-      return <label className="toggle"><input type="checkbox" checked={!!f.value} onChange={(e) => onSave(e.target.checked)} /><span>{f.value ? "On" : "Off"}</span></label>;
+      return <Toggle checked={!!f.value} onChange={(v) => void onSave(v)} label={f.value ? "On" : "Off"} />;
     case "enum":
       return <select value={f.value} onChange={(e) => onSave(e.target.value)}>{f.options!.map((o) => <option key={o}>{o}</option>)}</select>;
     case "days":

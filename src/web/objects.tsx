@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { Keymap } from "../shared/keys";
 import type { Item } from "./Chat";
 import { FLAG_LABEL, VERDICT_LABEL, ago, flagTone, sortFlags, type Tone } from "./format";
+import { Tip } from "./ui";
 
 /**
  * OOUX: the app has five objects. Each has ONE glyph, ONE way to name its "why you", ONE verb row,
@@ -19,17 +20,18 @@ export function kindOf(itemKey: string | null): Kind {
 }
 
 const PATHS: Record<Kind, ReactNode> = {
-  ticket: <><rect x="2.5" y="3" width="11" height="10" rx="2.5" /><path d="M5.5 6.5h5M5.5 9.5h3" /></>,
-  pr: <><circle cx="4.5" cy="3.5" r="1.6" /><circle cx="4.5" cy="12.5" r="1.6" /><circle cx="11.5" cy="12.5" r="1.6" /><path d="M4.5 5.1v5.8M11.5 10.9V7.5a2 2 0 0 0-2-2H8" /></>,
-  chat: <path d="M3 5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v3.5a2 2 0 0 1-2 2H7.5L4.5 13v-2.5H5A2 2 0 0 1 3 8.5z" />,
-  reminder: <><circle cx="8" cy="8" r="5.5" /><path d="M8 5v3.2l2 1.3" /></>,
-  note: <path d="M8 2.5 13.5 8 8 13.5 2.5 8z" />,
+  ticket: <><rect x="2.5" y="3" width="11" height="10" rx="2.5" /><path className="draw" pathLength="1" d="M5.5 6.5h5M5.5 9.5h3" /></>,
+  pr: <><circle className="node" cx="4.5" cy="3.5" r="1.6" /><circle className="node" cx="4.5" cy="12.5" r="1.6" /><circle className="node" cx="11.5" cy="12.5" r="1.6" /><path className="draw" pathLength="1" d="M4.5 5.1v5.8M11.5 10.9V7.5a2 2 0 0 0-2-2H8" /></>,
+  chat: <path className="bubble-g" d="M3 5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v3.5a2 2 0 0 1-2 2H7.5L4.5 13v-2.5H5A2 2 0 0 1 3 8.5z" />,
+  reminder: <><circle cx="8" cy="8" r="5.5" /><path className="hand" d="M8 8V5M8 8l2 1.3" /></>,
+  note: <path className="gem" d="M8 2.5 13.5 8 8 13.5 2.5 8z" />,
 };
 
-export function Glyph({ kind, size = 16 }: { kind: Kind; size?: number }) {
+/** Icons are alive but quiet: they draw/turn on hover, and urgent ones keep a slow pulse (`live`). `done` swaps in a drawn check. */
+export function Glyph({ kind, size = 16, live, done }: { kind: Kind; size?: number; live?: boolean; done?: boolean }) {
   return (
-    <svg className={`glyph k-${kind}`} width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-label={KIND_LABEL[kind]} role="img">
-      {PATHS[kind]}
+    <svg className={`glyph k-${kind} ${live ? "live" : ""} ${done ? "is-done" : ""}`} width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-label={KIND_LABEL[kind]} role="img">
+      {done ? <><circle cx="8" cy="8" r="5.5" /><path className="check" pathLength="1" d="M5.2 8.3l2 2 3.6-4" /></> : PATHS[kind]}
     </svg>
   );
 }
@@ -51,37 +53,18 @@ export function related(item: Item, all: Item[]): Item[] {
 }
 
 /** Compact representation, used in lists and as a relationship link. */
-export function ObjectRow({ item, now, selected, index = 0, onClick, detail }: { item: Item; now: number; selected?: boolean; index?: number; onClick: () => void; detail: "reason" | "why" }) {
+export function ObjectRow({ item, now, selected, index = 0, onClick, detail, leaving }: { item: Item; now: number; selected?: boolean; index?: number; onClick: () => void; detail: "reason" | "why"; leaving?: "out" | "done" }) {
   const w = why(item);
   const line = detail === "reason" && item.reason ? item.reason : w?.text;
   return (
-    <button className={`row ${selected ? "selected" : ""}`} data-key={item.itemKey} style={{ ["--i" as string]: index }} onClick={onClick}>
-      <Glyph kind={kindOf(item.itemKey)} />
+    <button className={`row ${selected ? "selected" : ""} ${leaving ? `leaving-${leaving}` : ""}`} data-key={item.itemKey} style={{ ["--i" as string]: index }} onClick={onClick}>
+      <Glyph kind={kindOf(item.itemKey)} live={kindOf(item.itemKey) === "reminder" && item.flags.includes("overdue_reminder")} done={leaving === "done"} />
       <div className="rb">
         <div className="t">{item.title}</div>
-        {line && <div className="why">{detail === "reason" && w ? <Lamp tone={w.tone} /> : w && <Lamp tone={w.tone} />}{line}</div>}
+        {line && <div className="why">{w && <Lamp tone={w.tone} />}{line}</div>}
       </div>
       <span className="when">{ago(item.lastActivity, now)}</span>
     </button>
-  );
-}
-
-export function Pop({ trigger, children, label, align = "left" }: { trigger: ReactNode; children: ReactNode; label: string; align?: "left" | "right" }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } };
-    window.addEventListener("mousedown", away);
-    window.addEventListener("keydown", esc, true);
-    return () => { window.removeEventListener("mousedown", away); window.removeEventListener("keydown", esc, true); };
-  }, [open]);
-  return (
-    <div className="pop" ref={ref}>
-      <button className="caret" aria-label={label} aria-expanded={open} onClick={() => setOpen(!open)}>{trigger}</button>
-      {open && <div className={`panel ${align}`} role="dialog" aria-label={label}>{children}</div>}
-    </div>
   );
 }
 
@@ -93,7 +76,7 @@ export function Verbs({ verbs, lead }: { verbs: Verb[]; lead?: ReactNode }) {
     <div className="verbs">
       {lead}
       {verbs.filter((v) => !v.hidden).map((v) => (
-        <button key={v.id} className={`verb ${v.primary ? "primary" : ""}`} onClick={v.onClick}>{v.label}{v.key && <kbd>{v.key}</kbd>}</button>
+        <Tip key={v.id} keyHint={v.key}><button className={`verb ${v.primary ? "primary" : ""}`} onClick={v.onClick}>{v.label}</button></Tip>
       ))}
     </div>
   );
