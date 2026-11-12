@@ -30,6 +30,15 @@ Built and unit-tested in a Linux cloud container with fixtures. Please verify, i
 - Summary size: 20/50/100/200/custom (max 500), default 20 and changeable in the UI. Older history is pulled from WAHA with a GET when fewer messages are stored.
 - This replaced the old global `ALLOW_CHAT_TO_LLM` switch; consent is now per chat.
 
+## Performance and resilience rules (learned the hard way under `demo:harsh`)
+- Serve the production bundle (dev mode = `WORK_INBOX_DEV=1`); React's dev build alone was ~5x slower with 250 rows.
+- Lists: rows are `memo`ised and read selection from `selection.ts` (external store), so a keypress re-renders two rows, not hundreds. Layout animation (`layout` props) only when a list/board is small (<=80 rows, <=60 cards). Don't put `layout` on every item.
+- Animated icons mount lazily via IntersectionObserver (`Glyph`). `content-visibility: auto` on rows, cards and columns.
+- All client requests go through `net.ts` `call()`: it never throws, times out, drives the "Can't reach the app" banner and backoff retry. Don't call `fetch` directly in components.
+- The server caps request bodies at 1 MB; the UI renders only the latest 120 messages of a chat.
+- Narrow windows: <=1000px the rail is icons, <=860px the split stacks. Keep `.detail` > 280px wide.
+- Measured on the harsh dataset (headless Chromium, no GPU): navigation key to paint p50 ~28 ms / p95 ~90 ms; switching Inbox<->Board ~190 ms.
+
 ## Claude Code protocol (MCP)
 `src/mcp/*` + `.mcp.json`; spec in `docs/PROTOCOL.md`. Tools map 1:1 to REST endpoints; there is no tool that sends WhatsApp. If you are Claude Code working in this repo you can use the `work-inbox` tools against the running app (`bun run dev`).
 

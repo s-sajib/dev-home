@@ -29,6 +29,8 @@ export function App() {
   const [data, setData] = useState<InboxResponse | null>(null);
   const [board, setBoard] = useState<BoardData | null>(null);
   const [view, setView] = useState<View>("inbox");
+  const [visited, setVisited] = useState<Set<View>>(new Set(["inbox"]));
+  useEffect(() => setVisited((v) => (v.has(view) ? v : new Set(v).add(view))), [view]);
   const [selKey, setSelKey] = useState<string | null>(null);
   const [cardSel, setCardSel] = useState<number | null>(null);
   const [drawer, setDrawer] = useState<number | null>(null);
@@ -306,8 +308,8 @@ export function App() {
 
         {view === "settings" && <Settings onClose={() => { setView("inbox"); load(); loadBoard(); }} onChanged={() => { load(); loadBoard(); }} />}
 
-        {view === "inbox" && (
-          <div className="split">
+        {visited.has("inbox") && (
+          <div className="split" hidden={view !== "inbox"}>
             <div className="list" data-testid="list">
               {flat.length === 0 && <div className="empty">Nothing needs you right now.</div>}
               <InboxGroups groups={groups} now={data.now} mode={mode} doneKey={doneKey} animateLayout={flat.length <= 80} onSelect={setSelKey} />
@@ -327,8 +329,8 @@ export function App() {
           </div>
         )}
 
-        {view === "board" && board && (
-          <Board board={board} now={data.now} sel={selCard?.id ?? null} onSelect={setCardSel} onOpen={setDrawer} onMove={moveCardTo} onAdd={addCardTo} adding={adding} setAdding={setAdding} />
+        {visited.has("board") && board && (
+          <Board hidden={view !== "board"} board={board} now={data.now} sel={selCard?.id ?? null} onSelect={setCardSel} onOpen={setDrawer} onMove={moveCardTo} onAdd={addCardTo} adding={adding} setAdding={setAdding} />
         )}
       </div>
 

@@ -1,5 +1,5 @@
 import { LayoutGroup, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { ago } from "./format";
 import { useIconHover } from "./icons";
 import { Glyph, Lamp, kindOf, why } from "./objects";
@@ -14,11 +14,12 @@ interface Props {
   board: BoardData; now: number; sel: number | null;
   onSelect: (id: number) => void; onOpen: (id: number) => void;
   onMove: (id: number, col: string, index: number) => void; onAdd: (col: string, title: string) => void;
-  adding: string | null; setAdding: (col: string | null) => void;
+  adding: string | null; setAdding: (col: string | null) => void; hidden?: boolean;
 }
 
 /** The pipeline reads as one thread with a node per stage; cards sit under the stage they have reached. */
-export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding, setAdding }: Props) {
+export const Board = memo(function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding, setAdding, hidden }: Props) {
+  const glide = board.cards.length <= 60; // layout animation re-measures every card on each render: only worth it for small boards
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<{ col: string; index: number } | null>(null);
   const colRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -32,7 +33,7 @@ export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding
   };
 
   return (
-    <div className="board" data-testid="board">
+    <div className="board" data-testid="board" hidden={hidden}>
       <LayoutGroup>
       <div className="track">
         {board.columns.map((col) => {
@@ -64,7 +65,7 @@ export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding
                       <div data-card={c.id} className={`cardwrap ${drag === c.id ? "dragging" : ""}`} draggable
                         onDragStart={(e) => { e.dataTransfer.setData("text/plain", String(c.id)); e.dataTransfer.effectAllowed = "move"; setDrag(c.id); }}
                         onDragEnd={() => { setDrag(null); setOver(null); }}>
-                        <CardFace card={c} sel={sel === c.id} now={now} onSelect={onSelect} onOpen={onOpen} />
+                        <CardFace card={c} sel={sel === c.id} now={now} glide={glide} onSelect={onSelect} onOpen={onOpen} />
                       </div>
                     </div>
                   );
@@ -79,13 +80,13 @@ export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding
       </LayoutGroup>
     </div>
   );
-}
+}, (a, b) => a.board === b.board && a.now === b.now && a.sel === b.sel && a.adding === b.adding && a.hidden === b.hidden);
 
-function CardFace({ card: c, sel, now, onSelect, onOpen }: { card: BoardCard; sel: boolean; now: number; onSelect: (id: number) => void; onOpen: (id: number) => void }) {
+const CardFace = memo(function CardFace({ card: c, sel, now, glide, onSelect, onOpen }: { card: BoardCard; sel: boolean; now: number; glide: boolean; onSelect: (id: number) => void; onOpen: (id: number) => void }) {
   const hover = useIconHover();
   const w = why({ flags: c.flags as any, verdict: null, reason: null });
   return (
-    <motion.button layout layoutId={`card-${c.id}`} transition={{ type: "spring", stiffness: 420, damping: 36 }} {...hover.triggerProps}
+    <motion.button layout={glide} layoutId={glide ? `card-${c.id}` : undefined} transition={{ type: "spring", stiffness: 420, damping: 36 }} {...hover.triggerProps}
       className={`card ${sel ? "selected" : ""}`} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }}
       onClick={() => onSelect(c.id)} onDoubleClick={() => onOpen(c.id)}>
       <div className="ct"><Glyph ref={hover.ref} kind={kindOf(c.itemKey)} size={16} live={w?.tone === "warn" && kindOf(c.itemKey) === "reminder"} /><span>{c.title}</span></div>
@@ -98,4 +99,4 @@ function CardFace({ card: c, sel, now, onSelect, onOpen }: { card: BoardCard; se
       </div>
     </motion.button>
   );
-}
+});

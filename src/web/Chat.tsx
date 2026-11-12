@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Keymap } from "../shared/keys";
 import type { InboxItem } from "../server/types";
 import { ago, dayLabel, initials, personColor, timeLabel } from "./format";
@@ -57,7 +57,6 @@ export function Chat(p: ChatProps) {
   const copyHover = useIconHover();
   useEffect(() => setOpen(false), [item.itemKey]);
   useEffect(() => { const el = convo.current; if (el) el.scrollTop = el.scrollHeight; }, [item.itemKey, item.events.length, item.draft]);
-  const runs = toRuns(item.events);
   const isGroup = item.itemKey.endsWith("@g.us");
   const w = why(item);
   const isCustom = !p.presets.includes(p.n);
@@ -109,19 +108,7 @@ export function Chat(p: ChatProps) {
       )}
 
       <div className="convo" ref={convo}>
-        {runs.map(({ day, run }, i) => (
-          <div key={i} style={{ display: "contents" }}>
-            {day && <div className="day">{dayLabel(Number(day), now)}</div>}
-            {run.msgs.map((m, j) => (
-              <motion.div key={j} className={`msg ${run.mine ? "out" : "in"} ${j === 0 ? "first" : ""}`} data-testid={run.mine ? "msg-out" : "msg-in"}
-                initial={{ opacity: 0, y: 8, x: run.mine ? 10 : -10 }} animate={{ opacity: 1, y: 0, x: 0 }} transition={{ type: "spring", stiffness: 420, damping: 34, delay: Math.min(i * 3 + j, 12) * 0.022 }}>
-                {j === 0 && !run.mine && isGroup && <div className="who-name" style={{ color: personColor(run.author) }}>{run.author}</div>}
-                <div className={`bubble ${m.mention ? "mention" : ""}`}>{withMentions(m.body)}</div>
-                {j === run.msgs.length - 1 && <div className="stamp">{timeLabel(m.ts)}</div>}
-              </motion.div>
-            ))}
-          </div>
-        ))}
+        <Messages events={item.events} now={now} isGroup={isGroup} />
         {item.draft && (
           <motion.div className="draftbubble" data-testid="draft" initial={{ opacity: 0, y: 10, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 360, damping: 30, delay: 0.15 }}>
             <header>Draft · not sent <button className={`copy ${copied ? "copied" : ""}`} {...copyHover.triggerProps} onClick={() => { p.onCopy(item.draft!); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }}>{copied ? <><CheckIcon size={13} />Copied</> : <><CopyIcon ref={copyHover.ref} size={13} />Copy <kbd>{p.keys.copy}</kbd></>}</button></header>
@@ -136,3 +123,25 @@ export function Chat(p: ChatProps) {
     </div>
   );
 }
+
+/** The conversation itself. Memoised on the events array, so unrelated re-renders never touch 120 animated bubbles. */
+const Messages = memo(function Messages({ events, now, isGroup }: { events: Item["events"]; now: number; isGroup: boolean }) {
+  const runs = toRuns(events);
+  return (
+    <>
+      {runs.map(({ day, run }, i) => (
+        <div key={i} style={{ display: "contents" }}>
+          {day && <div className="day">{dayLabel(Number(day), now)}</div>}
+          {run.msgs.map((m, j) => (
+            <motion.div key={j} className={`msg ${run.mine ? "out" : "in"} ${j === 0 ? "first" : ""}`} data-testid={run.mine ? "msg-out" : "msg-in"}
+              initial={{ opacity: 0, y: 8, x: run.mine ? 10 : -10 }} animate={{ opacity: 1, y: 0, x: 0 }} transition={{ type: "spring", stiffness: 420, damping: 34, delay: Math.min(i * 3 + j, 12) * 0.022 }}>
+              {j === 0 && !run.mine && isGroup && <div className="who-name" style={{ color: personColor(run.author) }}>{run.author}</div>}
+              <div className={`bubble ${m.mention ? "mention" : ""}`}>{withMentions(m.body)}</div>
+              {j === run.msgs.length - 1 && <div className="stamp">{timeLabel(m.ts)}</div>}
+            </motion.div>
+          ))}
+        </div>
+      ))}
+    </>
+  );
+});

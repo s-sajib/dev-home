@@ -25,13 +25,26 @@ export function kindOf(itemKey: string | null): Kind {
 const ICON = { ticket: TicketIcon, pr: GitPullRequestIcon, chat: MessageCircleIcon, reminder: AlarmClockIcon, note: StickyNoteIcon } as const;
 const LIVE_EVERY_MS = 6000;
 
+/** One shared observer: an animated icon is only mounted once its slot has been near the viewport. */
+const watchers = new Map<Element, () => void>();
+let io: IntersectionObserver | null = null;
+function whenNear(el: Element, cb: () => void) {
+  if (typeof IntersectionObserver === "undefined") return cb();
+  io ??= new IntersectionObserver((entries) => entries.forEach((e) => { if (e.isIntersecting) { watchers.get(e.target)?.(); watchers.delete(e.target); io!.unobserve(e.target); } }), { rootMargin: "300px" });
+  watchers.set(el, cb);
+  io.observe(el);
+}
+
 /**
  * One animated icon per object kind. Parents play it via `useIconHover` (pass its `ref`); `live` makes an urgent
  * object ring every few seconds; `done` swaps in a check that draws itself.
  */
 export const Glyph = forwardRef<IconHandle, { kind: Kind; size?: number; live?: boolean; done?: boolean }>(function Glyph({ kind, size = 17, live, done }, ref) {
   const inner = useRef<IconHandle>(null);
+  const slot = useRef<HTMLSpanElement>(null);
+  const [near, setNear] = useState(false);
   const [plays, setPlays] = useState(0);
+  useEffect(() => { if (slot.current && !near) whenNear(slot.current, () => setNear(true)); }, [near]);
   useImperativeHandle(ref, () => ({ startAnimation: () => inner.current?.startAnimation(), stopAnimation: () => inner.current?.stopAnimation() }));
   useEffect(() => {
     if (!live) return;
@@ -43,8 +56,8 @@ export const Glyph = forwardRef<IconHandle, { kind: Kind; size?: number; live?: 
   useEffect(() => { if (done) inner.current?.startAnimation(); }, [done]);
   const Icon = done ? CircleCheckIcon : ICON[kind];
   return (
-    <span className={`glyph k-${kind} ${live ? "live" : ""} ${done ? "is-done" : ""}`} role="img" aria-label={KIND_LABEL[kind]} data-plays={plays}>
-      <Icon ref={inner} size={size} />
+    <span ref={slot} className={`glyph k-${kind} ${live ? "live" : ""} ${done ? "is-done" : ""}`} role="img" aria-label={KIND_LABEL[kind]} data-plays={plays} style={{ width: size, height: size }}>
+      {near && <Icon ref={inner} size={size} />}
     </span>
   );
 });

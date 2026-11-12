@@ -16,7 +16,8 @@
     "test:all": "bun run typecheck && bun run test && bun run test:e2e",
     "demo:video": "bun scripts/workday.ts",
     "test:harsh": "playwright test -c playwright.harsh.config.ts",
-    "demo:harsh": "rm -f data/harsh.db* && WORK_INBOX_DEMO=harsh bun scripts/supervise.ts bun src/server/index.ts"
+    "demo:harsh": "rm -f data/harsh.db* && WORK_INBOX_DEMO=harsh bun scripts/supervise.ts bun src/server/index.ts",
+    "demo:harsh-video": "bun scripts/harsh-day.ts"
   },
   "dependencies": {
     "@animateicons/react": "^0.13.0",
