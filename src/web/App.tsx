@@ -7,6 +7,7 @@ import { SOURCE_LABEL, VERDICT_LABEL, ago, buildGroups } from "./format";
 import { Glyph, KIND_LABEL, Lamp, ObjectRow, Verbs, kindOf, related, urlsOf, verbsFor, why, type Ops } from "./objects";
 import { Settings } from "./Settings";
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
+import { InboxIcon, KanbanIcon, PlusIcon, SettingsIcon, useIconHover } from "./icons";
 import { Drawer, Modal, UiProvider } from "./ui";
 
 interface InboxResponse {
@@ -260,12 +261,9 @@ export function App() {
       <aside className="rail">
         <div className="brand"><i />Work Inbox{data.demo && <small>demo</small>}</div>
         <LayoutGroup id="nav">
-          {([["inbox", "Inbox", flat.length], ["board", "Board", board?.cards.length ?? 0], ["settings", "Settings", null]] as const).map(([v, label, n]) => (
-            <button key={v} className={`nav ${view === v ? "on" : ""}`} onClick={() => setView(v)}>
-              {view === v && <motion.span layoutId="navpill" className="navpill" transition={{ type: "spring", stiffness: 520, damping: 42 }} />}
-              <span className="navlabel">{label}</span>{n !== null && <span className="n">{n}</span>}
-            </button>
-          ))}
+          <NavButton icon={InboxIcon} label="Inbox" count={flat.length} on={view === "inbox"} onClick={() => setView("inbox")} />
+          <NavButton icon={KanbanIcon} label="Board" count={board?.cards.length ?? 0} on={view === "board"} onClick={() => setView("board")} />
+          <NavButton icon={SettingsIcon} label="Settings" on={view === "settings"} onClick={() => setView("settings")} />
         </LayoutGroup>
         <div className="spacer" />
         <button className={`health ${down.length ? "bad" : ""}`} onClick={() => setView("settings")} title={data.statuses.map((s) => `${SOURCE_LABEL[s.source]}: ${s.ok && !s.banner ? "ok" : s.banner ?? s.error}`).join("\n")}>
@@ -279,7 +277,7 @@ export function App() {
           <div className="topbar">
             <h1>{view === "inbox" ? "Inbox" : "Board"}</h1>
             <span className="sub">{today}{view === "inbox" && data.hiddenCount ? ` · ${data.hiddenCount} hidden` : ""}</span>
-            {view === "board" && <div className="actions"><button className="pill primary" onClick={() => setAdding(board?.columns[0] ?? null)}>New card</button></div>}
+            {view === "board" && <div className="actions"><NewCardButton onClick={() => setAdding(board?.columns[0] ?? null)} /></div>}
           </div>
         )}
         {view !== "settings" && down.map((s) => (
@@ -419,4 +417,20 @@ function CardDrawer({ card, item, now, keys, ops, relatedNode, onSave, onDelete 
       </section>
     </div>
   );
+}
+
+function NavButton({ icon: Icon, label, count, on, onClick }: { icon: typeof InboxIcon; label: string; count?: number; on: boolean; onClick: () => void }) {
+  const h = useIconHover();
+  return (
+    <button className={`nav ${on ? "on" : ""}`} onClick={onClick} {...h.triggerProps}>
+      {on && <motion.span layoutId="navpill" className="navpill" transition={{ type: "spring", stiffness: 520, damping: 42 }} />}
+      <span className="navicon"><Icon ref={h.ref} size={16} /></span>
+      <span className="navlabel">{label}</span>{count !== undefined && <span className="n">{count}</span>}
+    </button>
+  );
+}
+
+function NewCardButton({ onClick }: { onClick: () => void }) {
+  const h = useIconHover();
+  return <button className="pill primary" onClick={onClick} {...h.triggerProps}><PlusIcon ref={h.ref} size={14} />New card</button>;
 }

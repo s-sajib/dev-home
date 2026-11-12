@@ -107,10 +107,22 @@ test.describe("micro-interactions (Motion)", () => {
     expect(xs.some((v) => v > start + 20 && v < end - 20)).toBe(true);
   });
 
-  test("the overdue reminder's clock hand keeps turning", async ({ page }) => {
-    const hand = `() => { const h = document.querySelector('[data-testid=list] .row .glyph.live path:last-child'); return h ? (new DOMMatrix(getComputedStyle(h).transform).b) : 0; }`;
-    const xs = await sample(page, hand, 900);
-    expect(new Set(xs.map((v) => v.toFixed(4))).size).toBeGreaterThan(1);
+  test("icons play when their row is hovered (AnimateIcons), and an overdue reminder rings on its own", async ({ page }) => {
+    const row = page.locator('[data-testid=list] .row:has-text("Lena Park")');
+    const glyph = row.locator(".glyph");
+    await page.evaluate(() => {
+      (window as any).__mut = 0;
+      const g = [...document.querySelectorAll("[data-testid=list] .row")].find((r) => r.textContent?.includes("Lena Park"))!.querySelector(".glyph")!;
+      new MutationObserver((m) => ((window as any).__mut += m.length)).observe(g, { attributes: true, subtree: true, childList: true });
+    });
+    expect(await page.evaluate(() => (window as any).__mut)).toBe(0);
+    await row.hover();
+    await expect.poll(() => page.evaluate(() => (window as any).__mut), { timeout: 3000 }).toBeGreaterThan(0);
+    await expect(glyph).toBeVisible();
+
+    const live = page.locator('[data-testid=list] .row:has-text("Follow up on PAY-231") .glyph.live');
+    await expect(live).toHaveCount(1);
+    await expect.poll(async () => Number(await live.getAttribute("data-plays")), { timeout: 10_000 }).toBeGreaterThanOrEqual(2); // rings again every few seconds
   });
 
   test("the toast animates in and carries a shrinking timer", async ({ page }) => {
@@ -123,17 +135,54 @@ test.describe("micro-interactions (Motion)", () => {
     expect((await timer.boundingBox())!.width).toBeLessThan(w1);
   });
 
-  test("reduced motion: transforms stop (clock hand stays put) and layout animations are instant", async ({ page }) => {
+  test("reduced motion: icons stay at rest, the selection pill snaps", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.reload();
     await page.waitForSelector(".row");
-    await page.waitForTimeout(500);
-    const hand = `() => { const h = document.querySelector('[data-testid=list] .row .glyph.live path:last-child'); return h ? (new DOMMatrix(getComputedStyle(h).transform).b) : 0; }`;
-    const xs = await sample(page, hand, 700);
-    expect(new Set(xs.map((v) => v.toFixed(4))).size).toBe(1);
+    await page.waitForTimeout(400);
+    await page.evaluate(() => {
+      (window as any).__mut = 0;
+      const g = [...document.querySelectorAll("[data-testid=list] .row")].find((r) => r.textContent?.includes("Lena Park"))!.querySelector(".glyph")!;
+      new MutationObserver((m) => ((window as any).__mut += m.length)).observe(g, { attributes: true, subtree: true, childList: true });
+    });
+    await page.locator('[data-testid=list] .row:has-text("Lena Park")').hover();
+    await page.waitForTimeout(800);
+    expect(await page.evaluate(() => (window as any).__mut)).toBe(0); // hover does nothing under Reduce Motion
     const y = `() => (document.querySelector(".rowsel")?.getBoundingClientRect().top ?? 0)`;
     const [samples] = await Promise.all([sample(page, y, 500), page.keyboard.press("j")]);
     const before = samples[0]!, after = samples.at(-1)!;
-    expect(samples.filter((v) => v > before + 2 && v < after - 2).length).toBe(0); // no in-between frames
+    expect(samples.filter((v) => v > before + 2 && v < after - 2).length).toBe(0);
+  });
+});
+
+test.describe("macOS feel", () => {
+  test("the sidebar and toolbar are translucent materials", async ({ page }) => {
+    const blur = (sel: string) => page.locator(sel).first().evaluate((e) => getComputedStyle(e).backdropFilter || (getComputedStyle(e) as any).webkitBackdropFilter);
+    expect(await blur(".rail")).toContain("blur");
+    expect(await blur(".topbar")).toContain("blur");
+    expect(await page.locator(".rail").evaluate((e) => getComputedStyle(e).backgroundColor)).toMatch(/rgba?\(|color\(/);
+  });
+
+  test("keyboard focus shows a soft accent ring, mouse focus does not", async ({ page }) => {
+    await page.keyboard.press("Tab");
+    const outline = await page.evaluate(() => getComputedStyle(document.activeElement!).outlineWidth);
+    expect(outline).toBe("3px");
+  });
+
+  test("primary actions are filled accent buttons with a gradient; secondary verbs are quiet", async ({ page }) => {
+    await page.click('[data-testid=list] .row:has-text("PAY-231 Retry")');
+    const primary = page.getByRole("button", { name: /^Open ticket/ });
+    expect(await primary.evaluate((e) => getComputedStyle(e).backgroundImage)).toContain("gradient");
+    const quiet = page.getByRole("button", { name: /^Comment/ });
+    expect(await quiet.evaluate((e) => getComputedStyle(e).backgroundImage)).toBe("none");
+  });
+
+  test("segmented controls use a sliding thumb and switches use real roles", async ({ page }) => {
+    await page.click('[data-testid=list] .row:has-text("Acme Support Group")');
+    await page.getByRole("button", { name: "Summarise options" }).click();
+    const group = page.getByRole("radiogroup", { name: "Claude access" });
+    await expect(group.locator(".seg-pill")).toHaveCount(1);
+    await group.getByRole("radio", { name: "Manual" }).click();
+    await expect(group.locator(".seg-pill")).toHaveCount(1); // one pill that moved, not many
   });
 });

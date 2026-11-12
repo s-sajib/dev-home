@@ -1,6 +1,7 @@
 import { LayoutGroup, motion } from "motion/react";
 import { useRef, useState } from "react";
 import { ago } from "./format";
+import { useIconHover } from "./icons";
 import { Glyph, Lamp, kindOf, why } from "./objects";
 
 export interface BoardCard {
@@ -62,18 +63,7 @@ export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding
                       <div data-card={c.id} className={`cardwrap ${drag === c.id ? "dragging" : ""}`} draggable
                         onDragStart={(e) => { e.dataTransfer.setData("text/plain", String(c.id)); e.dataTransfer.effectAllowed = "move"; setDrag(c.id); }}
                         onDragEnd={() => { setDrag(null); setOver(null); }}>
-                        <motion.button layout layoutId={`card-${c.id}`} transition={{ type: "spring", stiffness: 420, damping: 36 }}
-                          className={`card ${sel === c.id ? "selected" : ""}`} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} whileHover="hover" variants={{ hover: { y: -1 } }}
-                          onClick={() => onSelect(c.id)} onDoubleClick={() => onOpen(c.id)}>
-                          <div className="ct"><Glyph kind={kindOf(c.itemKey)} live={w?.tone === "warn"} /><span>{c.title}</span></div>
-                          {c.notes && <div className="cn">{c.notes}</div>}
-                          <div className="cm">
-                            {c.ticketKey && <span className="key">{c.ticketKey}</span>}
-                            {w && w.tone && <Lamp tone={w.tone} />}
-                            {c.pinned && <span className="pin" title="Placed by hand. Automation won't move it.">◆</span>}
-                            {c.lastActivity && <span className="age">{ago(c.lastActivity, now)}</span>}
-                          </div>
-                        </motion.button>
+                        <CardFace card={c} sel={sel === c.id} now={now} onSelect={onSelect} onOpen={onOpen} />
                       </div>
                     </div>
                   );
@@ -87,5 +77,24 @@ export function Board({ board, now, sel, onSelect, onOpen, onMove, onAdd, adding
       </div>
       </LayoutGroup>
     </div>
+  );
+}
+
+function CardFace({ card: c, sel, now, onSelect, onOpen }: { card: BoardCard; sel: boolean; now: number; onSelect: (id: number) => void; onOpen: (id: number) => void }) {
+  const hover = useIconHover();
+  const w = why({ flags: c.flags as any, verdict: null, reason: null });
+  return (
+    <motion.button layout layoutId={`card-${c.id}`} transition={{ type: "spring", stiffness: 420, damping: 36 }} {...hover.triggerProps}
+      className={`card ${sel ? "selected" : ""}`} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} whileHover={{ y: -1 }} whileTap={{ scale: 0.985 }}
+      onClick={() => onSelect(c.id)} onDoubleClick={() => onOpen(c.id)}>
+      <div className="ct"><Glyph ref={hover.ref} kind={kindOf(c.itemKey)} size={16} live={w?.tone === "warn" && kindOf(c.itemKey) === "reminder"} /><span>{c.title}</span></div>
+      {c.notes && <div className="cn">{c.notes}</div>}
+      <div className="cm">
+        {c.ticketKey && <span className="key">{c.ticketKey}</span>}
+        {w && w.tone && <Lamp tone={w.tone} />}
+        {c.pinned && <span className="pin" title="Placed by hand. Automation won't move it.">◆</span>}
+        {c.lastActivity && <span className="age">{ago(c.lastActivity, now)}</span>}
+      </div>
+    </motion.button>
   );
 }

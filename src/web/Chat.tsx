@@ -4,6 +4,7 @@ import type { Keymap } from "../shared/keys";
 import type { InboxItem } from "../server/types";
 import { ago, dayLabel, initials, personColor, timeLabel } from "./format";
 import { Lamp, Verbs, why, type Verb } from "./objects";
+import { CheckIcon, ChevronDownIcon, CopyIcon, LockIcon, SparklesIcon, useIconHover } from "./icons";
 import { Menu, Segmented } from "./ui";
 
 export type LlmMode = "manual" | "auto" | "never";
@@ -52,6 +53,8 @@ export function Chat(p: ChatProps) {
   const [custom, setCustom] = useState("");
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const sparkle = useIconHover();
+  const copyHover = useIconHover();
   useEffect(() => setOpen(false), [item.itemKey]);
   useEffect(() => { const el = convo.current; if (el) el.scrollTop = el.scrollHeight; }, [item.itemKey, item.events.length, item.draft]);
   const runs = toRuns(item.events);
@@ -61,10 +64,10 @@ export function Chat(p: ChatProps) {
 
   const summarise = (
     <div className="split-btn">
-      <button disabled={never || p.busy === "summarize"} onClick={() => p.onSummarize(p.n)}>
-        {p.busy === "summarize" ? <>Summarising<span className="dots">{[0, 1, 2].map((i) => <motion.i key={i} animate={{ y: [0, -3, 0], opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 1, delay: i * 0.15 }} />)}</span></> : <>Summarise {p.n}</>}
+      <button disabled={never || p.busy === "summarize"} onClick={() => p.onSummarize(p.n)} {...sparkle.triggerProps}>
+        {p.busy === "summarize" ? <>Summarising<span className="dots">{[0, 1, 2].map((i) => <motion.i key={i} animate={{ y: [0, -3, 0], opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 1, delay: i * 0.15 }} />)}</span></> : <><SparklesIcon ref={sparkle.ref} size={15} />Summarise {p.n}</>}
       </button>
-      <Menu label="Summarise options" trigger="▾">
+      <Menu label="Summarise options" trigger={<ChevronDownIcon size={14} />}>
         <h5>Last messages</h5>
         <Segmented label="Number of messages" value={p.presets.includes(p.n) ? String(p.n) : undefined} disabled={never} onChange={(v) => { setCustom(""); p.setN(Number(v)); }}
           items={p.presets.map((x) => ({ value: String(x), label: <>{x}{x === p.defaultN && <i title="default"> ★</i>}</> }))}>
@@ -121,13 +124,13 @@ export function Chat(p: ChatProps) {
         ))}
         {item.draft && (
           <motion.div className="draftbubble" data-testid="draft" initial={{ opacity: 0, y: 10, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 360, damping: 30, delay: 0.15 }}>
-            <header>Draft · not sent <button className={`copy ${copied ? "copied" : ""}`} onClick={() => { p.onCopy(item.draft!); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }}>{copied ? <><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><motion.path initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.3 }} d="M3.5 8.5l3 3 6-7" /></svg> Copied</> : <>Copy <kbd>{p.keys.copy}</kbd></>}</button></header>
+            <header>Draft · not sent <button className={`copy ${copied ? "copied" : ""}`} {...copyHover.triggerProps} onClick={() => { p.onCopy(item.draft!); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }}>{copied ? <><CheckIcon size={13} />Copied</> : <><CopyIcon ref={copyHover.ref} size={13} />Copy <kbd>{p.keys.copy}</kbd></>}</button></header>
             <div>{item.draft}</div>
           </motion.div>
         )}
       </div>
       <div className="composer">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="7" width="10" height="7" rx="2" /><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" /></svg>
+        <LockIcon size={14} />
         Read-only. Drafts appear above; you send them yourself from your phone.
       </div>
     </div>

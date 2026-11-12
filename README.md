@@ -26,3 +26,7 @@ First read `CLAUDE.md` (what is verified vs not) and `SPIKE.md` (WhatsApp and Re
 ## Status
 
 All PRD v1 requirements (F1–F12) are implemented and unit-tested; live verification on a Mac is the remaining work (see `CLAUDE.md`).
+
+## Credits
+
+Icons: [AnimateIcons](https://animateicons.in) (MIT), whose shapes come from [Lucide](https://lucide.dev) (ISC); their notices ship in `node_modules/@animateicons/react/THIRD_PARTY_NOTICES.md`. Colours and fonts: the "dusk" skin of sajib.website (Schibsted Grotesk, Geist Mono).

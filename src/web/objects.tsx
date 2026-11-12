@@ -1,8 +1,9 @@
 import { motion } from "motion/react";
-import type { ReactNode } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import type { Keymap } from "../shared/keys";
 import type { Item } from "./Chat";
 import { FLAG_LABEL, VERDICT_LABEL, ago, flagTone, sortFlags, type Tone } from "./format";
+import { AlarmClockIcon, ArrowUpRightIcon, CircleCheckIcon, GitPullRequestIcon, MessageCircleIcon, StickyNoteIcon, TicketIcon, useIconHover, type IconHandle } from "./icons";
 import { Tip } from "./ui";
 
 /**
@@ -20,41 +21,32 @@ export function kindOf(itemKey: string | null): Kind {
   return "ticket";
 }
 
-/** Icons are variant-driven: any motion parent with whileHover="hover" makes them draw / turn. `live` keeps urgent ones moving slowly. */
-const draw = { rest: { pathLength: 1 }, hover: { pathLength: [0, 1], transition: { duration: 0.55 } } };
-const pop = { rest: { scale: 1 }, hover: { scale: [1, 1.5, 1], transition: { duration: 0.5 } } };
-const center = { transformBox: "fill-box", transformOrigin: "center" } as const;
-const view = { transformBox: "view-box", transformOrigin: "8px 8px" } as const;
+const ICON = { ticket: TicketIcon, pr: GitPullRequestIcon, chat: MessageCircleIcon, reminder: AlarmClockIcon, note: StickyNoteIcon } as const;
+const LIVE_EVERY_MS = 6000;
 
-export function Glyph({ kind, size = 16, live, done }: { kind: Kind; size?: number; live?: boolean; done?: boolean }) {
-  let body: ReactNode;
-  if (done) {
-    body = <><circle cx="8" cy="8" r="5.5" /><motion.path initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.4, delay: 0.08 }} d="M5.2 8.3l2 2 3.6-4" /></>;
-  } else if (kind === "ticket") {
-    body = <><rect x="2.5" y="3" width="11" height="10" rx="2.5" /><motion.path variants={draw} d="M5.5 6.5h5M5.5 9.5h3" /></>;
-  } else if (kind === "pr") {
-    body = <>
-      {[[4.5, 3.5], [4.5, 12.5], [11.5, 12.5]].map(([cx, cy], i) => <motion.circle key={i} variants={{ ...pop, hover: { ...pop.hover, transition: { duration: 0.5, delay: i * 0.08 } } }} style={center} cx={cx} cy={cy} r="1.6" />)}
-      <motion.path variants={draw} d="M4.5 5.1v5.8M11.5 10.9V7.5a2 2 0 0 0-2-2H8" />
-    </>;
-  } else if (kind === "chat") {
-    body = <motion.path variants={{ rest: { rotate: 0, y: 0 }, hover: { rotate: [0, -7, 4, 0], y: [0, -1, 0, 0], transition: { duration: 0.5 } } }} style={{ transformBox: "fill-box", transformOrigin: "30% 100%" }} d="M3 5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v3.5a2 2 0 0 1-2 2H7.5L4.5 13v-2.5H5A2 2 0 0 1 3 8.5z" />;
-  } else if (kind === "reminder") {
-    body = <>
-      <circle cx="8" cy="8" r="5.5" />
-      {live
-        ? <motion.path animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 24, ease: "linear" }} style={view} d="M8 8V5M8 8l2 1.3" />
-        : <motion.path variants={{ rest: { rotate: 0 }, hover: { rotate: 360, transition: { duration: 0.9 } } }} style={view} d="M8 8V5M8 8l2 1.3" />}
-    </>;
-  } else {
-    body = <motion.path variants={{ rest: { rotate: 0 }, hover: { rotate: 90, transition: { duration: 0.45 } } }} style={center} d="M8 2.5 13.5 8 8 13.5 2.5 8z" />;
-  }
+/**
+ * One animated icon per object kind. Parents play it via `useIconHover` (pass its `ref`); `live` makes an urgent
+ * object ring every few seconds; `done` swaps in a check that draws itself.
+ */
+export const Glyph = forwardRef<IconHandle, { kind: Kind; size?: number; live?: boolean; done?: boolean }>(function Glyph({ kind, size = 17, live, done }, ref) {
+  const inner = useRef<IconHandle>(null);
+  const [plays, setPlays] = useState(0);
+  useImperativeHandle(ref, () => ({ startAnimation: () => inner.current?.startAnimation(), stopAnimation: () => inner.current?.stopAnimation() }));
+  useEffect(() => {
+    if (!live) return;
+    const play = () => { inner.current?.startAnimation(); setPlays((n) => n + 1); };
+    const first = setTimeout(play, 900);
+    const every = setInterval(play, LIVE_EVERY_MS);
+    return () => { clearTimeout(first); clearInterval(every); };
+  }, [live]);
+  useEffect(() => { if (done) inner.current?.startAnimation(); }, [done]);
+  const Icon = done ? CircleCheckIcon : ICON[kind];
   return (
-    <svg className={`glyph k-${kind} ${live ? "live" : ""} ${done ? "is-done" : ""}`} width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-label={KIND_LABEL[kind]} role="img">
-      {body}
-    </svg>
+    <span className={`glyph k-${kind} ${live ? "live" : ""} ${done ? "is-done" : ""}`} role="img" aria-label={KIND_LABEL[kind]} data-plays={plays}>
+      <Icon ref={inner} size={size} />
+    </span>
   );
-}
+});
 
 /** The single "why this is here" line every object shows. */
 export function why(item: Pick<Item, "flags" | "verdict" | "reason">): { text: string; tone: Tone } | null {
@@ -80,14 +72,15 @@ export function ObjectRow({ item, now, selected, index = 0, onClick, detail, don
   const w = why(item);
   const line = detail === "reason" && item.reason ? item.reason : w?.text;
   const kind = kindOf(item.itemKey);
+  const hover = useIconHover();
   return (
     <motion.button
-      layout="position" className={`row ${selected ? "selected" : ""}`} data-key={item.itemKey} onClick={onClick}
-      variants={{ hidden: { opacity: 0, y: 6 }, rest: { opacity: 1, y: 0, x: 0, transition: { delay: Math.min(index, 14) * 0.03 } }, hover: { opacity: 1, y: 0, x: 0 } }}
-      initial="hidden" animate="rest" whileHover="hover" exit={{ opacity: 0, x: -14, transition: { duration: 0.2 } }}
+      layout="position" className={`row ${selected ? "selected" : ""}`} data-key={item.itemKey} onClick={onClick} {...hover.triggerProps}
+      variants={{ hidden: { opacity: 0, y: 6 }, rest: { opacity: 1, y: 0, x: 0, transition: { delay: Math.min(index, 14) * 0.03 } } }}
+      initial="hidden" animate="rest" exit={{ opacity: 0, x: -14, transition: { duration: 0.2 } }}
     >
       {selected && <motion.span layoutId="rowsel" className="rowsel" transition={{ type: "spring", stiffness: 520, damping: 42 }} />}
-      <Glyph kind={kind} live={kind === "reminder" && item.flags.includes("overdue_reminder")} done={done} />
+      <Glyph ref={hover.ref} kind={kind} live={kind === "reminder" && item.flags.includes("overdue_reminder")} done={done} />
       <div className="rb">
         <div className="t">{item.title}</div>
         {line && <div className="why">{w && <Lamp tone={w.tone} />}{line}</div>}
@@ -97,17 +90,24 @@ export function ObjectRow({ item, now, selected, index = 0, onClick, detail, don
   );
 }
 
-export interface Verb { id: string; label: string; key?: string; primary?: boolean; onClick: () => void; hidden?: boolean }
+export interface Verb { id: string; label: string; key?: string; primary?: boolean; onClick: () => void; hidden?: boolean; icon?: (p: { ref: React.Ref<IconHandle> }) => ReactNode }
 
 /** One verb row per object. Keys appear on hover so the page stays quiet. */
 export function Verbs({ verbs, lead }: { verbs: Verb[]; lead?: ReactNode }) {
   return (
     <div className="verbs">
       {lead}
-      {verbs.filter((v) => !v.hidden).map((v) => (
-        <Tip key={v.id} keyHint={v.key}><button className={`verb ${v.primary ? "primary" : ""}`} onClick={v.onClick}>{v.label}</button></Tip>
-      ))}
+      {verbs.filter((v) => !v.hidden).map((v) => <VerbButton key={v.id} verb={v} />)}
     </div>
+  );
+}
+
+function VerbButton({ verb: v }: { verb: Verb }) {
+  const hover = useIconHover();
+  return (
+    <Tip keyHint={v.key}>
+      <button className={`verb ${v.primary ? "primary" : ""}`} onClick={v.onClick} {...hover.triggerProps}>{v.label}{v.icon?.({ ref: hover.ref })}</button>
+    </Tip>
   );
 }
 
@@ -125,8 +125,8 @@ export function verbsFor(item: Item, ops: Ops, keys: Keymap, urls: { main: strin
   ];
   if (kind === "reminder") return [{ id: "complete", label: "Complete", key: keys.complete, primary: true, onClick: ops.complete }, ...common];
   const open: Verb[] = [
-    { id: "open", label: kind === "ticket" ? "Open ticket ↗" : "Open ↗", key: keys.open, primary: true, hidden: !urls.main, onClick: () => ops.open(urls.main!) },
-    { id: "pr", label: "Open PR ↗", hidden: !urls.pr, onClick: () => ops.open(urls.pr!) },
+    { id: "open", label: kind === "ticket" ? "Open ticket" : "Open", key: keys.open, primary: true, hidden: !urls.main, onClick: () => ops.open(urls.main!), icon: ({ ref }) => <ArrowUpRightIcon ref={ref} size={14} /> },
+    { id: "pr", label: "Open PR", hidden: !urls.pr, onClick: () => ops.open(urls.pr!), icon: ({ ref }) => <ArrowUpRightIcon ref={ref} size={14} /> },
   ];
   const jira: Verb[] = kind === "ticket" && item.ticketKey ? [
     { id: "transition", label: "Move", key: keys.transition, onClick: ops.transition },

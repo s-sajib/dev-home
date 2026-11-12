@@ -5,6 +5,7 @@ import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useId, type ReactNode } from "react";
+import { XIcon, useIconHover } from "./icons";
 
 /**
  * Radix gives behaviour and accessibility, Motion gives movement, styles.css gives the look.
@@ -73,7 +74,7 @@ export function Drawer({ open, onClose, title, children }: { open: boolean; onCl
               <Dialog.Content asChild forceMount aria-describedby={undefined}>
                 <motion.aside className="drawer" data-testid="drawer" initial={{ x: 40, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 32, opacity: 0 }} transition={{ type: "spring", stiffness: 380, damping: 36 }}>
                   <Dialog.Title className="vh">{title}</Dialog.Title>
-                  <Dialog.Close className="pill x">Close</Dialog.Close>
+                  <CloseButton />
                   {children}
                 </motion.aside>
               </Dialog.Content>
@@ -123,4 +124,9 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
       <span>{label}</span>
     </label>
   );
+}
+
+function CloseButton() {
+  const h = useIconHover();
+  return <Dialog.Close className="pill x" aria-label="Close" {...h.triggerProps}><XIcon ref={h.ref} size={14} />Close</Dialog.Close>;
 }
