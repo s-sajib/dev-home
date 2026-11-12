@@ -107,6 +107,15 @@ describe("board", () => {
     expect((await tool("board_add_card", {})).isError).toBe(true);
     expect((await tool("board_add_card", { itemKey: "chat:447700900007@c.us", column: "Pending" })).isError).toBe(false);
   });
+  test("a card can be made from one message via eventId, once", async () => {
+    const { tool } = await connect();
+    const item = (await tool("item_get", { itemKey: "ticket:PAY-231" })).json;
+    const ev = item.events.find((e: any) => e.kind === "comment");
+    expect(ev?.id).toBeTruthy();
+    const r = await tool("board_add_card", { itemKey: "ticket:PAY-231", eventId: ev.id });
+    expect(r.isError).toBe(false);
+    expect((await tool("board_add_card", { itemKey: "ticket:PAY-231", eventId: ev.id })).isError).toBe(true);
+  });
 });
 
 describe("writes and guard rails", () => {

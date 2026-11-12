@@ -76,8 +76,9 @@ export function registerTools(server: McpServer, call: Call) {
 
   server.registerTool(
     "board_add_card",
-    { title: "Add board card", description: "Create a manual card, or put an existing inbox item on the board by passing itemKey.", inputSchema: { title: z.string().min(1).max(300).optional(), notes: z.string().max(5000).optional(), column: z.string().optional(), itemKey: z.string().optional() }, annotations: WRITE },
-    async ({ title, notes, column, itemKey }) => {
+    { title: "Add board card", description: "Create a manual card, or put an existing inbox item on the board by passing itemKey. Pass itemKey + eventId (an event id from item_get) to make a card from one single message or comment; it links back to its source. Local only.", inputSchema: { title: z.string().min(1).max(300).optional(), notes: z.string().max(5000).optional(), column: z.string().optional(), itemKey: z.string().optional(), eventId: z.string().optional() }, annotations: WRITE },
+    async ({ title, notes, column, itemKey, eventId }) => {
+      if (itemKey && eventId) return run(call, "POST", `/api/items/${enc(itemKey)}/card-from-event`, { eventId, col: column });
       if (itemKey) return run(call, "POST", `/api/items/${enc(itemKey)}/board`, { col: column });
       if (!title) return fail("Provide a title, or an itemKey to add an existing item.");
       return run(call, "POST", "/api/board/cards", { title, notes, col: column });

@@ -17,7 +17,7 @@ claude mcp add work-inbox -- bun /absolute/path/to/dev-home/src/mcp/server.ts
 | `item_get` | read | One item with recent Jira/GitHub activity. |
 | `chat_messages` | read | Last `n` (1–500) messages of a WhatsApp chat, oldest first, `ME` = the user. Refused for chats set to **Never**. |
 | `board_get` | read | Column names + all cards (linked work and manual). |
-| `board_add_card` | write (local) | New manual card, or put an inbox item on the board (`itemKey`). |
+| `board_add_card` | write (local) | New manual card, put an inbox item on the board (`itemKey`), or make a card from one message/comment (`itemKey` + `eventId` from `item_get`; it links back to the source). |
 | `board_move_card` | write (local) | Move a card to a column/position. Pins it so automation leaves it alone. Does **not** change Jira. |
 | `board_update_card` | write (local) | Title, notes, `pinned: false` to hand placement back to automation. |
 | `item_dismiss` | write (local) | Dismiss (returns on new activity) or snooze (`snoozeHours`). |
@@ -40,4 +40,4 @@ There is deliberately **no tool that sends WhatsApp messages** and none that wri
 
 ## REST (what the tools call)
 `GET /api/inbox` · `GET /api/items/:key` · `GET /api/chat-messages?key=&n=` · `GET /api/board` ·
-`POST /api/board/cards` · `PATCH|DELETE /api/board/cards/:id` · `POST /api/items/:key/{dismiss,snooze,draft-save,board,transition,comment}`.
+`POST /api/board/cards` · `PATCH|DELETE /api/board/cards/:id` · `POST /api/items/:key/{dismiss,snooze,draft-save,board,card-from-event,transition,comment}`.

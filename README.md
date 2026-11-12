@@ -4,6 +4,8 @@ A personal, local-first inbox and work board that merges Jira, GitHub, WhatsApp 
 
 Views: **Inbox** (WhatsApp chats read like conversations), **Board** (configurable pipeline, drag and drop), **Settings**. Claude Code can drive it through MCP: see `docs/PROTOCOL.md`.
 
+**Board.** Default pipeline: Pending, To Do, In Progress, Decision Needed, PR Review, Merged, Deployed Stage, Ready for Release, Deployed Prod (Settings can drop Ready for Release). Cards come from Jira tickets, your PRs and assigned GitHub issues (placed by status, labels and PR state), or by hand. Hover any WhatsApp message or Jira/GitHub comment and press the board button to make a card from it; the card links back to its source. Jira sync is one way: Jira updates the board, moving a card never writes to Jira (use `t` on the ticket for that), and the sync can be switched off in Settings.
+
 Stack: Bun, `bun:sqlite`, React. WhatsApp via WAHA (read-only). Reminders via `osascript`.
 
 ## Run
