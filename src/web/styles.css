@@ -55,3 +55,14 @@ kbd { background: #222b38; border: 1px solid #323f52; border-bottom-width: 2px; 
 .toast button { background: transparent; border: 0; color: var(--accent); cursor: pointer; font: inherit; }
 .overlay { position: fixed; inset: 0; background: #000a; display: grid; place-items: center; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 26px; max-width: 460px; }
+.row { grid-template-areas: "srcs meta" "title title" "why why"; }
+.why { grid-area: why; color: var(--dim); font-size: 12.5px; line-height: 1.35; }
+.flag.verdict.needs_me { background: #14301f; color: #86efac; } .flag.verdict.delegate { background: #14233d; color: #93c5fd; } .flag.verdict.drop { background: #2a2f38; color: var(--dim); }
+.draft { background: #101c17; border: 1px solid #1f4d37; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+.draft-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; } .draft-head small { color: var(--dim); }
+.draft-head button, .toast button { margin-left: auto; background: #1b3a2b; border: 1px solid #2c6a4b; color: #bbf7d0; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; }
+.dim { color: var(--dim); } .toast.err { background: #3b1d1d; border-color: #6b2a2a; }
+.choices { list-style: none; padding: 0; margin: 0 0 10px; display: grid; gap: 6px; } .choices li { padding: 6px 10px; border-radius: 8px; background: var(--panel2); } .choices li.picked { outline: 2px solid var(--accent); }
+textarea { width: 100%; min-height: 120px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: inherit; }
+.card { min-width: 420px; } .card h3 { margin-top: 0; } code { background: #222b38; padding: 0 4px; border-radius: 4px; }
+.overlay { z-index: 50; } .toast { z-index: 60; }

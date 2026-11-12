@@ -66,7 +66,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     claudeBin: env.CLAUDE_BIN ?? "claude",
     claudeModel: env.CLAUDE_MODEL ?? null,
     autoJudge: env.AUTO_JUDGE !== "0",
-    allowChatToLlm: env.ALLOW_CHAT_TO_LLM === "1",
+    allowChatToLlm: env.ALLOW_CHAT_TO_LLM === "1" || env.WORK_INBOX_DEMO === "1",
     host: env.HOST ?? "127.0.0.1",
     jira,
     github,

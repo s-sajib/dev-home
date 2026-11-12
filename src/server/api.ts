@@ -1,76 +1,149 @@
+import { timingSafeEqual } from "node:crypto";
 import type { Config } from "./config";
 import type { DB } from "./db";
-import { dismissItem, listItems, restoreItem, snoozeItem } from "./inbox";
+import { dismissItem, listItems, rebuildItems, restoreItem, snoozeItem } from "./inbox";
 import { jiraComment, jiraTransition } from "./adapters/jira";
+import { completeReminder, createReminder, type RemindersDeps } from "./adapters/reminders";
+import { handleWahaWebhook } from "./adapters/whatsapp";
+import { draftReply, judgeItems, latestDraft, type Runner } from "./claude";
 import { getStatuses, pollOnce } from "./poller";
 import { logAction } from "./store";
 import type { SourceAdapter } from "./types";
 
 const json = (data: unknown, status = 200) => Response.json(data, { status });
+const safeEq = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
-/** All writes are explicit, logged commands triggered by a keypress. WhatsApp is never written to. */
-export function createApi(db: DB, cfg: Config, adapters: SourceAdapter[]) {
+export interface ApiDeps {
+  db: DB;
+  cfg: Config;
+  adapters: SourceAdapter[];
+  run: Runner;
+  reminders?: RemindersDeps;
+}
+
+/**
+ * All writes are explicit, logged commands triggered by a keypress. WhatsApp is never written to.
+ * The webhook is the only inbound write path and requires the shared token.
+ */
+export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
+  const ctx = () => ({ now: Date.now(), staleDays: cfg.staleDays, replyHours: cfg.replyHours });
+  const refresh = () => rebuildItems(db, ctx());
+
   return async function handle(req: Request): Promise<Response | null> {
     const url = new URL(req.url);
+
+    if (req.method === "POST" && url.pathname === "/webhook/waha") {
+      if (!cfg.whatsapp) return json({ error: "WhatsApp not configured" }, 404);
+      if (!cfg.whatsapp.webhookToken) return json({ error: "Set WAHA_WEBHOOK_TOKEN" }, 503);
+      if (!safeEq(url.searchParams.get("token") ?? "", cfg.whatsapp.webhookToken)) return json({ error: "forbidden" }, 403);
+      const result = await handleWahaWebhook(db, { cfg: cfg.whatsapp }, await req.json().catch(() => ({})));
+      if (result.stored) refresh();
+      return json(result);
+    }
+
     if (!url.pathname.startsWith("/api/")) return null;
     const path = url.pathname.slice(4);
     const method = req.method;
 
     if (method === "GET" && path === "/inbox") {
       const now = Date.now();
-      const items = listItems(db, now);
+      const items = listItems(db, now).map((i) => ({ ...i, draft: latestDraft(db, i.itemKey)?.body ?? null }));
       return json({
         now,
         items: items.filter((i) => !i.hidden),
         hiddenCount: items.filter((i) => i.hidden && i.flags.length > 0).length,
         statuses: getStatuses(db),
-        configured: { jira: !!cfg.jira, github: !!cfg.github },
+        configured: { jira: !!cfg.jira, github: !!cfg.github, reminders: !!reminders, whatsapp: !!cfg.whatsapp },
+        transitions: cfg.transitions,
+        chatToLlm: cfg.allowChatToLlm,
         demo: cfg.demo,
       });
+    }
+
+    if (method === "GET" && path === "/stats") {
+      // success metric: share of AI verdicts I override
+      const row = db.query("SELECT SUM(action = 'verdict_override') AS o, SUM(action IN ('accept','dismiss','snooze','transition','comment')) AS t FROM actions_log").get() as any;
+      return json({ overrides: row?.o ?? 0, decisions: row?.t ?? 0 });
     }
 
     if (method === "POST" && path === "/poll") {
       await pollOnce(db, adapters, cfg);
       return json({ ok: true });
     }
-
-    const m = path.match(/^\/items\/(.+)\/(dismiss|snooze|restore|transition|comment)$/);
-    if (method === "POST" && m) {
-      const itemKey = decodeURIComponent(m[1]!);
-      const action = m[2]!;
-      const body = (await req.json().catch(() => ({}))) as any;
+    if (method === "POST" && path === "/judge") {
       try {
-        if (action === "dismiss") {
-          const ok = dismissItem(db, itemKey);
-          logAction(db, itemKey, "dismiss", {}, ok, ok ? "dismissed" : "unknown item");
-          return json({ ok });
-        }
-        if (action === "snooze") {
-          const hours = Number(body.hours ?? 4);
-          const until = Date.now() + hours * 3_600_000;
-          snoozeItem(db, itemKey, until);
-          logAction(db, itemKey, "snooze", { hours }, true, `until ${new Date(until).toISOString()}`);
-          return json({ ok: true, until });
-        }
-        if (action === "restore") {
-          restoreItem(db, itemKey);
-          logAction(db, itemKey, "restore", {}, true, "restored");
-          return json({ ok: true });
-        }
-        // Jira writes need a ticket key and a confirmation flag from the UI
-        const ticket = itemKey.startsWith("ticket:") ? itemKey.slice(7) : String(body.ticketKey ?? "");
-        if (!cfg.jira || !ticket) return json({ ok: false, error: "Jira not configured or item has no ticket" }, 400);
-        if (body.confirm !== true) return json({ ok: false, error: "Confirmation required" }, 400);
-        const deps = { baseUrl: cfg.jira.baseUrl, email: cfg.jira.email, token: cfg.jira.token };
-        const result =
-          action === "transition" ? await jiraTransition(deps, ticket, String(body.status)) : await jiraComment(deps, ticket, String(body.text));
-        logAction(db, itemKey, action, { ticket, status: body.status }, true, result);
-        return json({ ok: true, result });
+        return json({ ok: true, judged: await judgeItems(db, cfg, run) });
       } catch (err: any) {
-        logAction(db, itemKey, action, body, false, String(err?.message ?? err));
         return json({ ok: false, error: String(err?.message ?? err) }, 502);
       }
     }
-    return json({ error: "not found" }, 404);
+
+    const m = path.match(/^\/items\/(.+)\/(dismiss|snooze|restore|accept|transition|comment|draft|remind|complete)$/);
+    if (method !== "POST" || !m) return json({ error: "not found" }, 404);
+
+    const itemKey = decodeURIComponent(m[1]!);
+    const action = m[2]!;
+    const body = (await req.json().catch(() => ({}))) as any;
+    const item = listItems(db, Date.now()).find((i) => i.itemKey === itemKey);
+    const fail = (status: number, error: string) => (logAction(db, itemKey, action, body, false, error), json({ ok: false, error }, status));
+
+    try {
+      if (action === "restore") {
+        restoreItem(db, itemKey);
+        logAction(db, itemKey, "restore", {}, true, "restored");
+        return json({ ok: true });
+      }
+      if (!item) return fail(404, "unknown item");
+
+      if (action === "dismiss" || action === "accept" || action === "snooze") {
+        // metric: dismissing a "needs me" or accepting a "drop" is an override of the AI verdict
+        const override = (action === "dismiss" && item.verdict === "needs_me") || (action === "accept" && item.verdict === "drop");
+        if (override) logAction(db, itemKey, "verdict_override", { verdict: item.verdict, action }, true, "override");
+        if (action === "dismiss") dismissItem(db, itemKey);
+        else if (action === "snooze") snoozeItem(db, itemKey, Date.now() + Number(body.hours ?? 4) * 3_600_000);
+        logAction(db, itemKey, action, body, true, "ok");
+        return json({ ok: true });
+      }
+
+      if (action === "draft") {
+        const draft = await draftReply(db, cfg, run, itemKey);
+        logAction(db, itemKey, "draft", {}, true, "drafted (not sent)");
+        return json({ ok: true, draft });
+      }
+
+      if (action === "remind") {
+        if (!reminders) return fail(400, "Reminders is only available on macOS");
+        const dueAt = Date.now() + Number(body.hours ?? 2) * 3_600_000;
+        const id = await createReminder(reminders, {
+          title: `Follow up: ${item.title}`,
+          notes: `${item.url ?? ""}\n${item.itemKey}`.trim(),
+          dueAt,
+        });
+        db.query("INSERT OR REPLACE INTO reminder_links (reminder_id, item_key, last_nudged_at, nudge_count) VALUES (?, ?, NULL, 0)").run(id, itemKey);
+        logAction(db, itemKey, "remind", { dueAt }, true, id);
+        return json({ ok: true, id, dueAt });
+      }
+
+      if (action === "complete") {
+        const ev = item.itemKey.startsWith("reminder:") ? item.itemKey.slice(9) : null;
+        if (!reminders || !ev) return fail(400, "Not a reminder");
+        await completeReminder(reminders, ev);
+        db.query("UPDATE events SET meta = json_set(meta, '$.completed', json('true')) WHERE source = 'reminders' AND source_id = ?").run(`rem:${ev}`);
+        refresh();
+        logAction(db, itemKey, "complete", {}, true, ev);
+        return json({ ok: true });
+      }
+
+      // Jira writes need a ticket key and an explicit confirmation from the UI
+      const ticket = item.ticketKey;
+      if (!cfg.jira || !ticket) return fail(400, "Jira not configured or this item has no linked ticket");
+      if (body.confirm !== true) return fail(400, "Confirmation required");
+      const deps = { baseUrl: cfg.jira.baseUrl, email: cfg.jira.email, token: cfg.jira.token };
+      const result = action === "transition" ? await jiraTransition(deps, ticket, String(body.status)) : await jiraComment(deps, ticket, String(body.text));
+      logAction(db, itemKey, action, { ticket, status: body.status }, true, result);
+      return json({ ok: true, result });
+    } catch (err: any) {
+      return fail(502, String(err?.message ?? err));
+    }
   };
 }

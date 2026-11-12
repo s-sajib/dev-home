@@ -1,3 +1,4 @@
+import type { Runner } from "./claude";
 import type { DB } from "./db";
 import { setStatus } from "./poller";
 import { upsertEvents } from "./store";
@@ -71,3 +72,21 @@ export function seedDemo(db: DB, now = Date.now()) {
     setStatus(db, { source: s, ok: true, lastPollAt: now - 90_000, error: null, banner: null });
   }
 }
+
+/** Canned "Claude" for demo mode so screenshots and trial runs never call a model. */
+export const demoRunner: Runner = async (prompt, schema) => {
+  if ("draft" in ((schema as any).properties ?? {})) {
+    return { draft: "Hi Priya, thanks for the ping. The retry fix is in review right now and I'm planning to have it merged and deployed before your 3pm demo. I'll confirm here by 2pm either way." };
+  }
+  const known: Record<string, [string, string]> = {
+    "reminder:r1": ["needs_me", "You set this yourself and it is past due."],
+    "ticket:PAY-231": ["needs_me", "Client demo at 3pm depends on this retry fix, and a review is waiting on you."],
+    "chat:120363@g.us": ["needs_me", "Client asked directly whether retries land today; no reply from you yet."],
+    "ticket:API-77": ["delegate", "Question about cursor format is for the mobile contract; Lena can decide with them."],
+    "pr:acme/web#1203": ["drop", "Automated lint bump with green CI; approve when convenient."],
+    "ticket:OPS-88": ["needs_me", "Blocked by Sam; unblocking credentials rotation is on you."],
+    "ticket:WEB-402": ["drop", "Copy tweak with no deadline; park it."],
+  };
+  const keys = [...prompt.matchAll(/<data id="([^"]+)">/g)].map((m) => m[1]!);
+  return { verdicts: keys.map((k) => ({ itemKey: k, verdict: known[k]?.[0] ?? "needs_me", reason: known[k]?.[1] ?? "Needs a look." })) };
+};
