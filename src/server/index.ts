@@ -5,7 +5,9 @@ import { createGithubAdapter } from "./adapters/github";
 import { createJiraAdapter } from "./adapters/jira";
 import { createRemindersAdapter } from "./adapters/reminders";
 import { createWhatsappAdapter, purgeOldChats } from "./adapters/whatsapp";
+import { backfillChat } from "./adapters/whatsapp";
 import { claudeRunner, judgeItems } from "./claude";
+import { autoHandleChats } from "./chatllm";
 import { demoRunner, seedDemo } from "./demo";
 import { rebuildItems } from "./inbox";
 import { consoleNotifier, macNotifier } from "./notify";
@@ -35,12 +37,16 @@ if (cfg.demo) {
   seedDemo(db);
   rebuildItems(db, ctx());
   await judgeItems(db, cfg, demoRunner);
+  await autoHandleChats({ db, cfg, run: demoRunner });
 } else {
   void cycle();
   setInterval(() => void cycle(), cfg.pollIntervalMs);
   // the nag runs in the server (not the browser) so it works with no window open
   const notify = process.platform === "darwin" ? macNotifier : consoleNotifier;
   setInterval(() => void runNag(db, cfg, notify).catch((e) => console.warn("[nag]", e.message)), 60_000);
+  // auto-mode chats: summarise + draft when new activity has settled (never sends anything)
+  const autoDeps = { db, cfg, run, backfill: cfg.whatsapp ? (k: string, n: number) => backfillChat(db, { cfg: cfg.whatsapp! }, k, n) : undefined };
+  setInterval(() => void autoHandleChats(autoDeps).then((r) => r.errors.forEach((e) => console.warn("[auto]", e))), 120_000);
   setInterval(() => purgeOldChats(db), 6 * 3_600_000);
   purgeOldChats(db);
 }

@@ -48,10 +48,19 @@ describe("nag (F11)", () => {
     rebuildItems(db, { now: wed10, staleDays: 5, replyHours: 4 });
     return db;
   };
-  test("only inside work hours, weekdays", () => {
+  test("default window is 08:00-01:00 every day, quiet 01:00-08:00", () => {
     expect(inWorkHours(wed10, cfg)).toBe(true);
-    expect(inWorkHours(new Date(2026, 10, 11, 22, 0).getTime(), cfg)).toBe(false);
-    expect(inWorkHours(new Date(2026, 10, 14, 11, 0).getTime(), cfg)).toBe(false); // Saturday
+    expect(inWorkHours(new Date(2026, 10, 11, 23, 30).getTime(), cfg)).toBe(true);
+    expect(inWorkHours(new Date(2026, 10, 12, 0, 30).getTime(), cfg)).toBe(true); // after midnight
+    expect(inWorkHours(new Date(2026, 10, 12, 3, 0).getTime(), cfg)).toBe(false);
+    expect(inWorkHours(new Date(2026, 10, 12, 7, 59).getTime(), cfg)).toBe(false);
+    expect(inWorkHours(new Date(2026, 10, 14, 11, 0).getTime(), cfg)).toBe(true); // Saturday
+  });
+  test("a 9-18 weekday config still excludes nights and weekends", () => {
+    const office = loadConfig({ WORK_START_HOUR: "9", WORK_END_HOUR: "18", WORK_DAYS: "1,2,3,4,5" });
+    expect(inWorkHours(wed10, office)).toBe(true);
+    expect(inWorkHours(new Date(2026, 10, 11, 22, 0).getTime(), office)).toBe(false);
+    expect(inWorkHours(new Date(2026, 10, 14, 11, 0).getTime(), office)).toBe(false);
   });
   test("intervals grow and cap", () => {
     expect(nagInterval(0)).toBe(15 * MIN);

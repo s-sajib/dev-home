@@ -87,6 +87,28 @@ const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   `,
+  `
+  CREATE TABLE chat_settings (
+    item_key TEXT PRIMARY KEY,
+    llm_mode TEXT NOT NULL DEFAULT 'manual'
+  );
+  CREATE TABLE summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_key TEXT NOT NULL,
+    n INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    action_items TEXT NOT NULL DEFAULT '[]',
+    reply_needed INTEGER NOT NULL DEFAULT 0,
+    sensitive INTEGER NOT NULL DEFAULT 0,
+    for_activity INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX summaries_item ON summaries (item_key);
+  CREATE TABLE settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  `,
 ];
 
 export function openDb(path: string): DB {

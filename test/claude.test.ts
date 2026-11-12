@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { draftReply, itemsNeedingVerdict, judgeItems, latestDraft, parseClaudeOutput, redact, type Runner } from "../src/server/claude";
+import { setMode } from "../src/server/chatllm";
 import { loadConfig } from "../src/server/config";
 import { openDb } from "../src/server/db";
 import { demoEvents } from "../src/server/demo";
@@ -54,9 +55,20 @@ describe("verdicts", () => {
     expect(await judgeItems(db, cfg, run, now)).toBe(1);
     expect(itemsNeedingVerdict(db, now).some((i) => i.itemKey === "ticket:PAY-231")).toBe(false);
     expect(itemsNeedingVerdict(db, now).some((i) => i.itemKey === "ticket:OPS-88")).toBe(true);
-    // chat text is withheld unless allowed
+    // chat text is withheld unless the chat is in auto mode
     expect(prompts.join()).toContain("[chat text withheld]");
     expect(prompts.join()).not.toContain("demo at 3pm");
+    setMode(db, "chat:120363@g.us", "auto");
+    await judgeItems(db, cfg, async (p) => (prompts.push(p), { verdicts: [] }), now);
+    expect(prompts.join()).toContain("demo at 3pm");
+  });
+
+  test("chats set to never are not sent at all", async () => {
+    const db = setup();
+    setMode(db, "chat:120363@g.us", "never");
+    const prompts: string[] = [];
+    await judgeItems(db, loadConfig({}), async (p) => (prompts.push(p), { verdicts: [] }), now);
+    expect(prompts.join()).not.toContain("chat:120363@g.us");
   });
 
   test("new activity makes a cached verdict stale again", async () => {
@@ -70,14 +82,16 @@ describe("verdicts", () => {
 });
 
 describe("drafts", () => {
-  test("refuses until chat text is allowed", async () => {
-    await expect(draftReply(setup(), loadConfig({}), async () => ({ draft: "x" }), "chat:120363@g.us", now)).rejects.toThrow(/ALLOW_CHAT_TO_LLM/);
+  test("refuses for chats set to never", async () => {
+    const db = setup();
+    setMode(db, "chat:120363@g.us", "never");
+    await expect(draftReply(db, loadConfig({}), async () => ({ draft: "x" }), "chat:120363@g.us", now)).rejects.toThrow(/Never/);
   });
   test("includes chat plus linked ticket, stores the draft, never sends", async () => {
     const db = setup();
     let seen = "";
     const run: Runner = async (p) => { seen = p; return { draft: "Retries land today, I'll confirm by 2pm." }; };
-    const d = await draftReply(db, loadConfig({ ALLOW_CHAT_TO_LLM: "1" }), run, "chat:120363@g.us", now);
+    const d = await draftReply(db, loadConfig({}), run, "chat:120363@g.us", now);
     expect(d).toContain("2pm");
     expect(seen).toContain("demo at 3pm");
     expect(seen).toContain("PAY-231");

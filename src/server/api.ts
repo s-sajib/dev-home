@@ -6,6 +6,8 @@ import { jiraComment, jiraTransition } from "./adapters/jira";
 import { completeReminder, createReminder, type RemindersDeps } from "./adapters/reminders";
 import { handleWahaWebhook } from "./adapters/whatsapp";
 import { draftReply, judgeItems, latestDraft, type Runner } from "./claude";
+import { backfillChat } from "./adapters/whatsapp";
+import { autoHandleChats, clampN, getMode, latestSummary, LLM_MODES, modesByItem, setMode, setSetting, summarizeChat, summaryDefault, type LlmMode } from "./chatllm";
 import { getStatuses, pollOnce } from "./poller";
 import { logAction } from "./store";
 import type { SourceAdapter } from "./types";
@@ -28,6 +30,10 @@ export interface ApiDeps {
 export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
   const ctx = () => ({ now: Date.now(), staleDays: cfg.staleDays, replyHours: cfg.replyHours });
   const refresh = () => rebuildItems(db, ctx());
+  const summarizeDeps = () => ({
+    db, cfg, run,
+    backfill: cfg.whatsapp ? (key: string, n: number) => backfillChat(db, { cfg: cfg.whatsapp! }, key, n) : undefined,
+  });
 
   return async function handle(req: Request): Promise<Response | null> {
     const url = new URL(req.url);
@@ -47,7 +53,13 @@ export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
 
     if (method === "GET" && path === "/inbox") {
       const now = Date.now();
-      const items = listItems(db, now).map((i) => ({ ...i, draft: latestDraft(db, i.itemKey)?.body ?? null }));
+      const modes = modesByItem(db);
+      const items = listItems(db, now).map((i) => ({
+        ...i,
+        draft: latestDraft(db, i.itemKey)?.body ?? null,
+        llmMode: i.itemKey.startsWith("chat:") ? (modes.get(i.itemKey) ?? "manual") : null,
+        summary: i.itemKey.startsWith("chat:") ? latestSummary(db, i.itemKey) : null,
+      }));
       return json({
         now,
         items: items.filter((i) => !i.hidden),
@@ -55,7 +67,7 @@ export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
         statuses: getStatuses(db),
         configured: { jira: !!cfg.jira, github: !!cfg.github, reminders: !!reminders, whatsapp: !!cfg.whatsapp },
         transitions: cfg.transitions,
-        chatToLlm: cfg.allowChatToLlm,
+        settings: { summaryN: summaryDefault(db, cfg) },
         demo: cfg.demo,
       });
     }
@@ -70,6 +82,14 @@ export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
       await pollOnce(db, adapters, cfg);
       return json({ ok: true });
     }
+    if (method === "POST" && path === "/settings") {
+      const b = (await req.json().catch(() => ({}))) as any;
+      if (b.summaryN !== undefined) setSetting(db, "summary_n", String(clampN(b.summaryN, cfg.summaryDefault)));
+      return json({ ok: true, settings: { summaryN: summaryDefault(db, cfg) } });
+    }
+    if (method === "POST" && path === "/auto") {
+      return json({ ok: true, ...(await autoHandleChats(summarizeDeps())) });
+    }
     if (method === "POST" && path === "/judge") {
       try {
         return json({ ok: true, judged: await judgeItems(db, cfg, run) });
@@ -78,7 +98,7 @@ export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
       }
     }
 
-    const m = path.match(/^\/items\/(.+)\/(dismiss|snooze|restore|accept|transition|comment|draft|remind|complete)$/);
+    const m = path.match(/^\/items\/(.+)\/(dismiss|snooze|restore|accept|transition|comment|draft|remind|complete|summarize|llm-mode)$/);
     if (method !== "POST" || !m) return json({ error: "not found" }, 404);
 
     const itemKey = decodeURIComponent(m[1]!);
@@ -103,6 +123,20 @@ export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
         else if (action === "snooze") snoozeItem(db, itemKey, Date.now() + Number(body.hours ?? 4) * 3_600_000);
         logAction(db, itemKey, action, body, true, "ok");
         return json({ ok: true });
+      }
+
+      if (action === "llm-mode") {
+        if (!itemKey.startsWith("chat:") || !LLM_MODES.includes(body.mode)) return fail(400, "invalid mode");
+        setMode(db, itemKey, body.mode as LlmMode);
+        logAction(db, itemKey, "llm-mode", { mode: body.mode }, true, "ok");
+        return json({ ok: true, mode: getMode(db, itemKey) });
+      }
+
+      if (action === "summarize") {
+        const n = clampN(body.n, summaryDefault(db, cfg));
+        const summary = await summarizeChat(summarizeDeps(), itemKey, n);
+        logAction(db, itemKey, "summarize", { n }, true, "summarised (nothing sent)");
+        return json({ ok: true, summary });
       }
 
       if (action === "draft") {

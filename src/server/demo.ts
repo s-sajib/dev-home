@@ -1,5 +1,6 @@
 import type { Runner } from "./claude";
 import type { DB } from "./db";
+import { setMode } from "./chatllm";
 import { setStatus } from "./poller";
 import { upsertEvents } from "./store";
 import type { NormalizedEvent } from "./types";
@@ -39,6 +40,12 @@ export function demoEvents(now: number): NormalizedEvent[] {
     { ...base, source: "whatsapp", sourceId: "m3", kind: "chat", nativeKey: "chat:120363@g.us", ticketKey: null, title: "Acme Support Group",
       author: "Tom (Acme)", body: "+1, we're seeing duplicates too", ts: now - 5.5 * H },
 
+    // 1:1 chat with a teammate, owed reply
+    { ...base, source: "whatsapp", sourceId: "d1", kind: "chat", nativeKey: "chat:447700900007@c.us", ticketKey: null, title: "Lena Park",
+      author: "Lena Park", mentionsMe: true, body: "Hey, can you review my pagination PR when you get a sec? I'm blocked on API-77 until it's merged.", ts: now - 5 * H },
+    { ...base, source: "whatsapp", sourceId: "d2", kind: "chat", nativeKey: "chat:447700900007@c.us", ticketKey: null, title: "Lena Park",
+      author: "Lena Park", mentionsMe: true, body: "Also the cursor question in the ticket, mobile needs it by Thursday", ts: now - 4.5 * H },
+
     // Assigned ticket, status changed by someone else
     { ...base, source: "jira", sourceId: "issue:OPS-88", kind: "ticket", nativeKey: "ticket:OPS-88", ticketKey: "OPS-88",
       title: "OPS-88 Rotate staging database credentials", author: "Sam Okafor", url: `${jira}/OPS-88`, ts: now - 26 * H,
@@ -68,6 +75,7 @@ export function demoEvents(now: number): NormalizedEvent[] {
 
 export function seedDemo(db: DB, now = Date.now()) {
   upsertEvents(db, demoEvents(now));
+  setMode(db, "chat:120363@g.us", "auto"); // the client group is fine to handle automatically in the demo
   for (const s of ["jira", "github", "whatsapp", "reminders"] as const) {
     setStatus(db, { source: s, ok: true, lastPollAt: now - 90_000, error: null, banner: null });
   }
@@ -75,6 +83,24 @@ export function seedDemo(db: DB, now = Date.now()) {
 
 /** Canned "Claude" for demo mode so screenshots and trial runs never call a model. */
 export const demoRunner: Runner = async (prompt, schema) => {
+  if ("reply_needed" in ((schema as any).properties ?? {})) {
+    const lines = (prompt.match(/^\[\d{4}-/gm) ?? []).length;
+    return prompt.includes("Lena Park")
+      ? {
+          summary: "Lena is blocked on API-77 until her pagination PR gets a review, and mobile needs the cursor format decided by Thursday.",
+          action_items: ["Review Lena's pagination PR", "Decide: opaque cursor or invoice id (needed Thursday)"],
+          reply_needed: true,
+          reply_draft: "Hi Lena, I'll review the PR this afternoon. On the cursor: let's go with an opaque cursor, I'll confirm on the ticket.",
+          sensitive: false,
+        }
+      : {
+          summary: `Acme's Priya asked for an update on the failed webhooks and says they have a demo at 3pm; Tom sees duplicate deliveries too. Nobody from your side has answered (${lines} messages read).`,
+          action_items: ["Confirm whether the retry fix lands before the 3pm demo", "Look into the duplicate deliveries Tom reported"],
+          reply_needed: true,
+          reply_draft: "Hi Priya, thanks for the ping. The retry fix is in review right now and I'm planning to have it merged and deployed before your 3pm demo. I'll confirm here by 2pm either way.",
+          sensitive: false,
+        };
+  }
   if ("draft" in ((schema as any).properties ?? {})) {
     return { draft: "Hi Priya, thanks for the ping. The retry fix is in review right now and I'm planning to have it merged and deployed before your 3pm demo. I'll confirm here by 2pm either way." };
   }

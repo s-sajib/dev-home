@@ -1,6 +1,7 @@
 import type { Config } from "./config";
 import type { DB } from "./db";
 import { listItems } from "./inbox";
+import { modesByItem, type LlmMode } from "./chatllm";
 import type { InboxItem, Verdict } from "./types";
 
 /**
@@ -95,7 +96,9 @@ export function itemsNeedingVerdict(db: DB, now: number): InboxItem[] {
 }
 
 export async function judgeItems(db: DB, cfg: Config, run: Runner, now = Date.now()): Promise<number> {
-  const todo = itemsNeedingVerdict(db, now);
+  // chats set to "never" are never sent; chats on "manual" are judged on flags only (text withheld) unless "auto"
+  const modes: Map<string, LlmMode> = modesByItem(db);
+  const todo = itemsNeedingVerdict(db, now).filter((i) => modes.get(i.itemKey) !== "never");
   let done = 0;
   for (let i = 0; i < todo.length; i += BATCH) {
     const batch = todo.slice(i, i + BATCH);
@@ -104,7 +107,7 @@ export async function judgeItems(db: DB, cfg: Config, run: Runner, now = Date.no
       "needs_me: I must act or reply personally. drop: no action needed from me (FYI, noise, already handled). delegate: someone else on my team should handle it.",
       "Give a one-line reason (max 140 chars). Return one verdict per itemKey.",
       "",
-      ...batch.map((it) => describe(it, cfg.allowChatToLlm)),
+      ...batch.map((it) => describe(it, modes.get(it.itemKey) === "auto")),
     ].join("\n");
     const out = (await run(prompt, VERDICT_SCHEMA, SYSTEM)) as { verdicts?: { itemKey: string; verdict: string; reason: string }[] };
     const byKey = new Map(batch.map((b) => [b.itemKey, b]));
@@ -123,7 +126,7 @@ export async function judgeItems(db: DB, cfg: Config, run: Runner, now = Date.no
 const DRAFT_SCHEMA = { type: "object", properties: { draft: { type: "string" } }, required: ["draft"] };
 
 export async function draftReply(db: DB, cfg: Config, run: Runner, itemKey: string, now = Date.now()): Promise<string> {
-  if (!cfg.allowChatToLlm) throw new Error("Chat text is not allowed to go to the LLM yet. Set ALLOW_CHAT_TO_LLM=1 once you have confirmed that is permitted.");
+  if (modesByItem(db).get(itemKey) === "never") throw new Error("This chat is set to Never: its text is not sent to Claude.");
   const items = listItems(db, now);
   const item = items.find((i) => i.itemKey === itemKey);
   if (!item) throw new Error("unknown item");

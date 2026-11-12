@@ -11,13 +11,17 @@ export function nagInterval(count: number): number {
   return NAG_INTERVALS[Math.min(count, NAG_INTERVALS.length - 1)]!;
 }
 
-/** Work hours only (local time, Mon-Fri) so it never pings at night or on weekends. */
-export function inWorkHours(now: number, cfg: Pick<Config, "workStartHour" | "workEndHour">): boolean {
+/** Inside the configured window and on a work day. Handles windows that cross midnight (8 -> 1). */
+export function inWorkHours(now: number, cfg: Pick<Config, "workStartHour" | "workEndHour" | "workDays">): boolean {
   const d = new Date(now);
-  const day = d.getDay();
-  if (day === 0 || day === 6) return false;
   const h = d.getHours() + d.getMinutes() / 60;
-  return h >= cfg.workStartHour && h < cfg.workEndHour;
+  const { workStartHour: a, workEndHour: b } = cfg;
+  const wraps = b <= a;
+  const inWindow = wraps ? h >= a || h < b : h >= a && h < b;
+  if (!inWindow) return false;
+  // the after-midnight part belongs to the previous day's shift
+  const shiftDay = wraps && h < b ? (d.getDay() + 6) % 7 : d.getDay();
+  return cfg.workDays.includes(shiftDay);
 }
 
 export interface Nag {
@@ -27,7 +31,7 @@ export interface Nag {
   count: number;
 }
 
-export function dueNags(db: DB, cfg: Pick<Config, "workStartHour" | "workEndHour">, now: number): Nag[] {
+export function dueNags(db: DB, cfg: Pick<Config, "workStartHour" | "workEndHour" | "workDays">, now: number): Nag[] {
   if (!inWorkHours(now, cfg)) return [];
   const links = new Map(
     (db.query("SELECT * FROM reminder_links").all() as any[]).map((r) => [r.reminder_id as string, r]),

@@ -118,3 +118,33 @@ describe("webhook + rules end to end", () => {
     expect(c.whatsapp!.myIds).toEqual(["1555@c.us", "99@lid"]);
   });
 });
+
+import { backfillChat, getMyIds } from "../src/server/adapters/whatsapp";
+import { chatMessages } from "../src/server/chatllm";
+
+describe("history backfill + learned ids", () => {
+  test("backfill is GET-only, keys messages to the chat even without from/to, and is idempotent", async () => {
+    const db = openDb(":memory:");
+    const calls: { url: string; method: string }[] = [];
+    const history = [
+      { id: "h1", timestamp: ts(600), fromMe: false, participant: "447700900001@c.us", body: "older question", _data: { notifyName: "Priya" } },
+      { id: "h2", timestamp: ts(590), fromMe: true, body: "older answer" },
+    ];
+    const fetchImpl = (async (url: any, init: any) => (calls.push({ url: String(url), method: init?.method ?? "GET" }), new Response(JSON.stringify(history)))) as any;
+    const deps = { cfg, fetchImpl };
+    expect(await backfillChat(db, deps, `chat:${GROUP}`, 50)).toBe(2);
+    await backfillChat(db, deps, `chat:${GROUP}`, 50);
+    expect(chatMessages(db, `chat:${GROUP}`, 10).map((m) => m.body)).toEqual(["older question", "older answer"]);
+    expect(chatMessages(db, `chat:${GROUP}`, 10)[1]!.authorIsMe).toBe(true);
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+    expect(calls[0]!.url).toContain("limit=50");
+  });
+
+  test("my ids are learned from webhook envelopes, so WA_MY_IDS is optional", async () => {
+    const db = openDb(":memory:");
+    const bare = { ...cfg, myIds: [] as string[] };
+    const deps = { cfg: bare, fetchImpl: (async () => new Response("{}")) as any };
+    await handleWahaWebhook(db, deps, { event: "message.any", me: { id: "15551234567@c.us", lid: "98765432101@lid" }, payload: { id: "z1", timestamp: ts(1), from: GROUP, fromMe: false, participant: "1@c.us", body: "hi" } });
+    expect(getMyIds(db, bare)).toEqual(["15551234567@c.us", "98765432101@lid"]);
+  });
+});

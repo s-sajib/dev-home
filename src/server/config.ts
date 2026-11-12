@@ -4,16 +4,18 @@ export interface Config {
   demo: boolean;
   staleDays: number;
   replyHours: number;
-  /** Work hours for nags, local time, 24h */
+  /** Nag window, local time. End may be earlier than start to cross midnight (8 -> 1 means 08:00 to 01:00). */
   workStartHour: number;
   workEndHour: number;
+  /** 0 = Sunday ... 6 = Saturday */
+  workDays: number[];
+  /** Default number of messages for WhatsApp summaries (editable in the UI) */
+  summaryDefault: number;
   pollIntervalMs: number;
   /** Claude Code CLI used in print mode (`claude -p`) for verdicts and drafts. */
   claudeBin: string;
   claudeModel: string | null;
   autoJudge: boolean;
-  /** PRD open question: may client/team chat text be sent to an LLM? Off until you say so. */
-  allowChatToLlm: boolean;
   host: string;
   jira: { baseUrl: string; email: string; token: string } | null;
   github: { token: string; username: string } | null;
@@ -60,13 +62,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     demo: env.WORK_INBOX_DEMO === "1",
     staleDays: num(env.STALE_DAYS, 5),
     replyHours: num(env.REPLY_HOURS, 4),
-    workStartHour: num(env.WORK_START_HOUR, 9),
-    workEndHour: num(env.WORK_END_HOUR, 18),
+    workStartHour: num(env.WORK_START_HOUR, 8),
+    workEndHour: num(env.WORK_END_HOUR, 1),
+    workDays: (env.WORK_DAYS ?? "0,1,2,3,4,5,6").split(",").map((x) => Number(x.trim())).filter((n) => n >= 0 && n <= 6),
+    summaryDefault: num(env.SUMMARY_MESSAGES, 20),
     pollIntervalMs: num(env.POLL_MINUTES, 5) * 60_000,
     claudeBin: env.CLAUDE_BIN ?? "claude",
     claudeModel: env.CLAUDE_MODEL ?? null,
     autoJudge: env.AUTO_JUDGE !== "0",
-    allowChatToLlm: env.ALLOW_CHAT_TO_LLM === "1" || env.WORK_INBOX_DEMO === "1",
     host: env.HOST ?? "127.0.0.1",
     jira,
     github,

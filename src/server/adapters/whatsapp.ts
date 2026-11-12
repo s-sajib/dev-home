@@ -2,6 +2,7 @@ import type { WhatsappConfig } from "../config";
 import type { DB } from "../db";
 import { setStatus } from "../poller";
 import { upsertEvents } from "../store";
+import { getSetting, setSetting } from "../chatllm";
 import type { NormalizedEvent, SourceAdapter } from "../types";
 
 /**
@@ -65,12 +66,14 @@ export function extractContext(p: any): { mentioned: string[]; quotedParticipant
 export interface ParseOpts {
   myIds: string[];
   chatName: string;
+  /** Force the chat id (history endpoints don't always carry a usable from/to) */
+  chatId?: string;
 }
 
 /** Normalise one WAHA message payload. Returns null for things we ignore (status broadcasts, empty events). */
 export function parseWahaMessage(p: any, o: ParseOpts): NormalizedEvent | null {
   if (!p || !p.id) return null;
-  const chatId = String(p.fromMe ? p.to : p.from);
+  const chatId = o.chatId ?? String(p.fromMe ? p.to : p.from);
   if (!chatId || chatId.includes("status@broadcast") || chatId.endsWith("@newsletter")) return null;
   const isGroup = chatId.endsWith("@g.us");
   const mine = new Set(o.myIds.map(jidLocal).filter(Boolean));
@@ -122,6 +125,31 @@ export interface WebhookResult {
   reason?: string;
 }
 
+/** My ids = configured ids + any `me` WAHA reported in webhooks (remembered, so WA_MY_IDS is optional). */
+export function getMyIds(db: DB, cfg: WhatsappConfig): string[] {
+  const learned = (getSetting(db, "wa_my_ids") ?? "").split(",").filter(Boolean);
+  return [...new Set([...cfg.myIds, ...learned])];
+}
+
+function rememberMe(db: DB, ids: unknown[]) {
+  const have = new Set((getSetting(db, "wa_my_ids") ?? "").split(",").filter(Boolean));
+  const add = ids.filter(Boolean).map(String).filter((x) => !have.has(x));
+  if (add.length) setSetting(db, "wa_my_ids", [...have, ...add].join(","));
+}
+
+/** Pull older messages for one chat from WAHA (GET only) so a summary can cover more than what the webhook has seen. */
+export async function backfillChat(db: DB, deps: WahaDeps, itemKey: string, n: number): Promise<number> {
+  const chatId = itemKey.replace(/^chat:/, "");
+  const rows = await wahaGet(deps, `/api/${encodeURIComponent(deps.cfg.session)}/chats/${encodeURIComponent(chatId)}/messages?limit=${Math.min(n, 500)}&downloadMedia=false`);
+  if (!Array.isArray(rows)) return 0;
+  const name = chatNameFor(db, chatId) ?? "";
+  const events = rows
+    .map((p) => parseWahaMessage(p, { myIds: getMyIds(db, deps.cfg), chatName: name, chatId }))
+    .filter((e): e is NormalizedEvent => e !== null);
+  upsertEvents(db, events);
+  return events.length;
+}
+
 /** Entry point for POST /webhook/waha. Events only ever flow in; nothing is sent back. */
 export async function handleWahaWebhook(db: DB, deps: WahaDeps, body: any, now = Date.now()): Promise<WebhookResult> {
   const event = String(body?.event ?? "");
@@ -134,7 +162,8 @@ export async function handleWahaWebhook(db: DB, deps: WahaDeps, body: any, now =
   if (event !== "message" && event !== "message.any") return { handled: false, stored: 0, reason: `ignored event ${event}` };
 
   const p = body.payload;
-  const myIds = [...deps.cfg.myIds, body?.me?.id, body?.me?.lid].filter(Boolean) as string[];
+  rememberMe(db, [body?.me?.id, body?.me?.lid]);
+  const myIds = getMyIds(db, deps.cfg);
   const chatId = String(p?.fromMe ? p?.to : p?.from);
   let name = chatNameFor(db, chatId);
   if (!name && chatId.endsWith("@g.us")) {
