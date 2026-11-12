@@ -83,4 +83,6 @@ export interface SourceAdapter {
   /** True when credentials/config are present; unconfigured adapters are skipped, not errors. */
   configured(): boolean;
   fetch(since: number | null): Promise<NormalizedEvent[]>;
+  /** Optional liveness check (e.g. WhatsApp session state). A banner is shown while not ok. */
+  health?(): Promise<{ ok: boolean; banner: string | null }>;
 }

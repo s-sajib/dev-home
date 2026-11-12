@@ -1,0 +1,68 @@
+import type { Config } from "./config";
+import type { DB } from "./db";
+import type { Notifier } from "./notify";
+import { loadEvents, logAction } from "./store";
+
+const MIN = 60_000;
+/** Growing re-nag intervals; the last one repeats. */
+export const NAG_INTERVALS = [15 * MIN, 30 * MIN, 60 * MIN, 2 * 60 * MIN, 4 * 60 * MIN];
+
+export function nagInterval(count: number): number {
+  return NAG_INTERVALS[Math.min(count, NAG_INTERVALS.length - 1)]!;
+}
+
+/** Work hours only (local time, Mon-Fri) so it never pings at night or on weekends. */
+export function inWorkHours(now: number, cfg: Pick<Config, "workStartHour" | "workEndHour">): boolean {
+  const d = new Date(now);
+  const day = d.getDay();
+  if (day === 0 || day === 6) return false;
+  const h = d.getHours() + d.getMinutes() / 60;
+  return h >= cfg.workStartHour && h < cfg.workEndHour;
+}
+
+export interface Nag {
+  reminderId: string;
+  title: string;
+  itemKey: string;
+  count: number;
+}
+
+export function dueNags(db: DB, cfg: Pick<Config, "workStartHour" | "workEndHour">, now: number): Nag[] {
+  if (!inWorkHours(now, cfg)) return [];
+  const links = new Map(
+    (db.query("SELECT * FROM reminder_links").all() as any[]).map((r) => [r.reminder_id as string, r]),
+  );
+  const out: Nag[] = [];
+  for (const e of loadEvents(db)) {
+    if (e.kind !== "reminder" || e.meta.completed === true) continue;
+    const due = e.meta.due as number | null;
+    if (typeof due !== "number" || due > now) continue;
+    const id = String(e.meta.reminderId ?? e.sourceId);
+    const link = links.get(id);
+    const count = link?.nudge_count ?? 0;
+    const base = link?.last_nudged_at ?? due;
+    if (now - base >= nagInterval(count)) out.push({ reminderId: id, title: e.title, itemKey: e.nativeKey, count });
+  }
+  return out;
+}
+
+export async function runNag(db: DB, cfg: Config, notify: Notifier, now = Date.now()): Promise<number> {
+  const nags = dueNags(db, cfg, now);
+  for (const n of nags) {
+    try {
+      await notify({
+        title: `Overdue: ${n.title}`.slice(0, 120),
+        body: n.count === 0 ? "Still open. Complete it or snooze it in the inbox." : `Still open (reminder #${n.count + 1}).`,
+        openUrl: `http://${cfg.host}:${cfg.port}/?item=${encodeURIComponent(n.itemKey)}`,
+      });
+      db.query(
+        `INSERT INTO reminder_links (reminder_id, item_key, last_nudged_at, nudge_count) VALUES (?, ?, ?, 1)
+         ON CONFLICT (reminder_id) DO UPDATE SET last_nudged_at = excluded.last_nudged_at, nudge_count = nudge_count + 1`,
+      ).run(n.reminderId, n.itemKey, now);
+      logAction(db, n.itemKey, "nag", { count: n.count + 1 }, true, "notified");
+    } catch (err: any) {
+      logAction(db, n.itemKey, "nag", {}, false, String(err?.message ?? err));
+    }
+  }
+  return nags.length;
+}
