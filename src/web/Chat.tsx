@@ -1,0 +1,157 @@
+import { motion } from "motion/react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import type { Keymap } from "../shared/keys";
+import type { InboxItem } from "../server/types";
+import { ago, dayLabel, initials, personColor, timeLabel } from "./format";
+import { Lamp, Verbs, why, type Verb } from "./objects";
+import { CheckIcon, ChevronDownIcon, CopyIcon, KanbanIcon, LockIcon, SparklesIcon, useIconHover } from "./icons";
+import { Menu, Segmented, Tip } from "./ui";
+
+export type LlmMode = "manual" | "auto" | "never";
+export interface SummaryDto { n: number; summary: string; actionItems: string[]; replyNeeded: boolean; sensitive: boolean; createdAt: number }
+export type Item = InboxItem & { draft: string | null; llmMode: LlmMode | null; summary: SummaryDto | null };
+
+export interface ChatProps {
+  item: Item; now: number; busy: string | null; defaultN: number; n: number; presets: number[]; keys: Keymap; verbs: Verb[]; relatedNode: ReactNode;
+  onCard: (eventId: string) => void; onCopy: (t: string) => void; setN: (n: number) => void; onSummarize: (n: number) => void; onDefault: (n: number) => void; onMode: (m: LlmMode) => void;
+}
+
+interface Run { author: string; mine: boolean; msgs: { id: string; body: string; ts: number; mention: boolean }[] }
+
+/** Consecutive messages by the same person within 5 minutes read as one run, like a real chat. */
+export function toRuns(events: Item["events"]): { day: string | null; run: Run }[] {
+  const out: { day: string | null; run: Run }[] = [];
+  let lastDay = "";
+  let cur: Run | null = null;
+  let lastTs = 0;
+  for (const e of events) {
+    const day = new Date(e.ts).toDateString();
+    const newDay = day !== lastDay;
+    if (!cur || newDay || e.authorIsMe !== cur.mine || (!e.authorIsMe && e.author !== cur.author) || e.ts - lastTs > 5 * 60_000) {
+      cur = { author: e.author, mine: e.authorIsMe, msgs: [] };
+      out.push({ day: newDay ? String(e.ts) : null, run: cur });
+      lastDay = day;
+    }
+    cur.msgs.push({ id: e.id, body: e.body, ts: e.ts, mention: e.mentionsMe });
+    lastTs = e.ts;
+  }
+  return out;
+}
+
+const withMentions = (s: string) => s.split(/(@[\w.\-]+)/).map((p, i) => (/^@[\w.\-]+$/.test(p) ? <span key={i} className="at">{p}</span> : p));
+const MODE_HELP: Record<LlmMode, string> = {
+  manual: "Claude sees this chat only when you press a key.",
+  auto: "New activity is summarised and drafted for you. Nothing is ever sent.",
+  never: "This chat's text is never sent to Claude.",
+};
+
+export function Chat(p: ChatProps) {
+  const { item, now } = p;
+  const never = item.llmMode === "never";
+  const sm = item.summary;
+  const convo = useRef<HTMLDivElement>(null);
+  const [custom, setCustom] = useState("");
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const sparkle = useIconHover();
+  const copyHover = useIconHover();
+  useEffect(() => setOpen(false), [item.itemKey]);
+  useEffect(() => { const el = convo.current; if (el) el.scrollTop = el.scrollHeight; }, [item.itemKey, item.events.length, item.draft]);
+  const isGroup = item.itemKey.endsWith("@g.us");
+  const w = why(item);
+  const isCustom = !p.presets.includes(p.n);
+
+  const summarise = (
+    <div className="split-btn">
+      <button disabled={never || p.busy === "summarize"} onClick={() => p.onSummarize(p.n)} {...sparkle.triggerProps}>
+        {p.busy === "summarize" ? <>Summarising<span className="dots">{[0, 1, 2].map((i) => <motion.i key={i} animate={{ y: [0, -3, 0], opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 1, delay: i * 0.15 }} />)}</span></> : <><SparklesIcon ref={sparkle.ref} size={15} />Summarise {p.n}</>}
+      </button>
+      <Menu label="Summarise options" trigger={<ChevronDownIcon size={14} />}>
+        <h5>Last messages</h5>
+        <Segmented label="Number of messages" value={p.presets.includes(p.n) ? String(p.n) : undefined} disabled={never} onChange={(v) => { setCustom(""); p.setN(Number(v)); }}
+          items={p.presets.map((x) => ({ value: String(x), label: <>{x}{x === p.defaultN && <i title="default"> ★</i>}</> }))}>
+          <input className={isCustom ? "on" : ""} placeholder="custom" inputMode="numeric" value={custom} disabled={never}
+            onChange={(e) => { const d = e.target.value.replace(/\D/g, ""); setCustom(d); if (Number(d) > 0) p.setN(Math.min(Number(d), 500)); }} />
+        </Segmented>
+        {p.n !== p.defaultN && <p className="help"><button className="link" onClick={() => p.onDefault(p.n)}>make {p.n} the default</button></p>}
+        <h5>Claude may read this chat</h5>
+        <Segmented label="Claude access" value={item.llmMode ?? "manual"} onChange={p.onMode}
+          items={(["manual", "auto", "never"] as const).map((m) => ({ value: m, label: m[0]!.toUpperCase() + m.slice(1), tone: m }))} />
+        <p className="help">{MODE_HELP[item.llmMode ?? "manual"]} <kbd>{p.keys.mode}</kbd></p>
+      </Menu>
+    </div>
+  );
+
+  return (
+    <div className="chat ov" data-testid="chat">
+      <div className="chat-head">
+        <div className="avatar">{initials(item.title)}</div>
+        <div>
+          <h3>{item.title}</h3>
+          <div className="kicker">Conversation · {isGroup ? "group" : "direct"}
+            {item.llmMode === "auto" && <span className="modeflag auto">· auto</span>}
+            {never && <span className="modeflag never">· no AI</span>}
+          </div>
+        </div>
+      </div>
+      {(w || item.reason) && <p className="whyline" style={{ marginTop: 14 }}>{item.accepted ? <CheckIcon size={13} /> : w && <Lamp tone={w.tone} />}{[item.accepted ? "Accepted" : null, w?.text, item.reason].filter(Boolean).join(" · ")}</p>}
+      <Verbs lead={summarise} verbs={p.verbs} />
+      {p.relatedNode}
+
+      {sm && (
+        <section className="summary" data-testid="summary">
+          <header>Summary {sm.replyNeeded && <span className="chip warn">reply needed</span>}{sm.sensitive && <span className="chip bad">may be sensitive</span>}<small>last {sm.n} · {ago(sm.createdAt, now)}</small></header>
+          <p className={open ? "" : "clamp"}>{sm.summary}</p>
+          {open && sm.actionItems.length > 0 && <ul>{sm.actionItems.map((a, i) => <li key={i}>{a}</li>)}</ul>}
+          <button className="link" onClick={() => setOpen(!open)}>{open ? "Show less" : `Show ${sm.actionItems.length} action item${sm.actionItems.length === 1 ? "" : "s"}`}</button>
+        </section>
+      )}
+
+      <div className="convo" ref={convo}>
+        <Messages events={item.events} now={now} isGroup={isGroup} onCard={p.onCard} />
+        {item.draft && (
+          <motion.div className="draftbubble" data-testid="draft" initial={{ opacity: 0, y: 10, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 360, damping: 30, delay: 0.15 }}>
+            <header>Draft · not sent <button className={`copy ${copied ? "copied" : ""}`} {...copyHover.triggerProps} onClick={() => { p.onCopy(item.draft!); setCopied(true); window.setTimeout(() => setCopied(false), 1600); }}>{copied ? <><CheckIcon size={13} />Copied</> : <><CopyIcon ref={copyHover.ref} size={13} />Copy <kbd>{p.keys.copy}</kbd></>}</button></header>
+            <div>{item.draft}</div>
+          </motion.div>
+        )}
+      </div>
+      <div className="composer">
+        <LockIcon size={14} />
+        Read-only. Drafts appear above; you send them yourself from your phone.
+      </div>
+    </div>
+  );
+}
+
+/** The conversation itself. Memoised on the events array, so unrelated re-renders never touch 120 animated bubbles. */
+const Messages = memo(function Messages({ events, now, isGroup, onCard }: { events: Item["events"]; now: number; isGroup: boolean; onCard: (eventId: string) => void }) {
+  const runs = toRuns(events);
+  return (
+    <>
+      {runs.map(({ day, run }, i) => (
+        <div key={i} style={{ display: "contents" }}>
+          {day && <div className="day">{dayLabel(Number(day), now)}</div>}
+          {run.msgs.map((m, j) => (
+            <motion.div key={j} className={`msg ${run.mine ? "out" : "in"} ${j === 0 ? "first" : ""}`} data-testid={run.mine ? "msg-out" : "msg-in"}
+              initial={{ opacity: 0, y: 8, x: run.mine ? 10 : -10 }} animate={{ opacity: 1, y: 0, x: 0 }} transition={{ type: "spring", stiffness: 420, damping: 34, delay: Math.min(i * 3 + j, 12) * 0.022 }}>
+              {j === 0 && !run.mine && isGroup && <div className="who-name" style={{ color: personColor(run.author) }}>{run.author}</div>}
+              <div className="bubblewrap"><div className={`bubble ${m.mention ? "mention" : ""}`}>{withMentions(m.body)}</div><MakeCard onClick={() => onCard(m.id)} /></div>
+              {j === run.msgs.length - 1 && <div className="stamp">{timeLabel(m.ts)}</div>}
+            </motion.div>
+          ))}
+        </div>
+      ))}
+    </>
+  );
+});
+
+/** Hover action on a message or comment: turn it into a board card that links back here. */
+export function MakeCard({ onClick }: { onClick: () => void }) {
+  const h = useIconHover();
+  return (
+    <Tip label="Make a board card from this">
+      <button className="mk" aria-label="Make a board card from this" onClick={onClick} {...h.triggerProps}><KanbanIcon ref={h.ref} size={13} /></button>
+    </Tip>
+  );
+}

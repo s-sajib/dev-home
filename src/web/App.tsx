@@ -1,0 +1,481 @@
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ACTIONS, type ActionId, type Keymap } from "../shared/keys";
+import type { SourceStatus } from "../server/types";
+import { Board, type BoardCard, type BoardData } from "./Board";
+import { Chat, MakeCard, type Item, type LlmMode } from "./Chat";
+import { SOURCE_LABEL, VERDICT_LABEL, ago, buildGroups } from "./format";
+import { Glyph, KIND_LABEL, Lamp, ObjectRow, Verbs, kindOf, related, urlsOf, verbsFor, why, type Ops } from "./objects";
+import { call, useConn } from "./net";
+import { selection } from "./selection";
+import { Settings } from "./Settings";
+import { AnimatePresence, LayoutGroup, motion } from "motion/react";
+import { InboxIcon, KanbanIcon, PlusIcon, SettingsIcon, useIconHover } from "./icons";
+import { Drawer, Modal, UiProvider } from "./ui";
+
+interface InboxResponse {
+  now: number; items: Item[]; hiddenCount: number; statuses: SourceStatus[];
+  configured: { jira: boolean; github: boolean; reminders: boolean; whatsapp: boolean };
+  transitions: string[];
+  ui: { refreshSeconds: number; grouping: "auto" | "verdict" | "lane"; snoozeHours: number; remindHours: number; summaryPresets: number[]; summaryDefault: number; keys: Keymap; theme: "system" | "dark" | "light" };
+  demo: boolean;
+  harsh?: boolean;
+}
+type View = "inbox" | "board" | "settings";
+type Modal = { kind: "transition"; item: Item; picked: string | null } | { kind: "comment"; item: Item; text: string } | { kind: "help" } | null;
+
+const json = (method: string, body?: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+
+export function App() {
+  const [data, setData] = useState<InboxResponse | null>(null);
+  const [board, setBoard] = useState<BoardData | null>(null);
+  const [view, setView] = useState<View>("inbox");
+  const [visited, setVisited] = useState<Set<View>>(new Set(["inbox"]));
+  useEffect(() => setVisited((v) => (v.has(view) ? v : new Set(v).add(view))), [view]);
+  const [selKey, setSelKey] = useState<string | null>(null);
+  const [cardSel, setCardSel] = useState<number | null>(null);
+  const [drawer, setDrawer] = useState<number | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; undo?: () => void; error?: boolean } | null>(null);
+  const [modal, setModal] = useState<Modal>(null);
+  const [grouping, setGrouping] = useState<"auto" | "verdict" | "lane" | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [sumN, setSumN] = useState<number | null>(null);
+  const [doneKey, setDoneKey] = useState<string | null>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
+
+  const conn = useConn();
+  const load = useCallback(async () => { const r = await call("GET", "/api/inbox"); if (r.ok) setData(r.data); }, []);
+  const loadBoard = useCallback(async () => { const r = await call("GET", "/api/board"); if (r.ok) setBoard(r.data); }, []);
+  // while the app is unreachable, retry with backoff (1.5s, 3s, 6s ... 15s) instead of waiting for the next poll
+  useEffect(() => {
+    if (conn.ok) return;
+    const t = setTimeout(() => { load(); loadBoard(); }, Math.min(15_000, 1500 * 2 ** Math.min(conn.failures, 4)));
+    return () => clearTimeout(t);
+  }, [conn.ok, conn.failures, load, loadBoard]);
+  useEffect(() => {
+    const wake = () => { load(); loadBoard(); };
+    addEventListener("online", wake); document.addEventListener("visibilitychange", wake);
+    return () => { removeEventListener("online", wake); document.removeEventListener("visibilitychange", wake); };
+  }, [load, loadBoard]);
+  const refreshMs = (data?.ui.refreshSeconds ?? 30) * 1000;
+  useEffect(() => {
+    load(); loadBoard();
+    const t = setInterval(() => { load(); loadBoard(); }, refreshMs);
+    return () => clearInterval(t);
+  }, [load, loadBoard, refreshMs]);
+
+  useEffect(() => {
+    const t = data?.ui.theme;
+    if (!t || t === "system") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = t;
+  }, [data?.ui.theme]);
+
+  const wanted = grouping ?? data?.ui.grouping ?? "auto";
+  const mode = wanted === "auto" ? (data?.items.some((i) => i.verdict) ? "verdict" : "lane") : wanted;
+  const groups = useMemo(() => (data ? buildGroups(data.items, mode) : []), [data, mode]);
+  const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  const idx = Math.max(0, flat.findIndex((i) => i.itemKey === selKey));
+  const current: Item | undefined = flat[idx];
+  useLayoutEffect(() => selection.set(current?.itemKey ?? null), [current?.itemKey]);
+
+  useEffect(() => {
+    const want = new URLSearchParams(location.search).get("item");
+    if (want && flat.some((i) => i.itemKey === want)) setSelKey(want);
+  }, [flat.length]);
+
+  const say = (text: string, opts: { undo?: () => void; error?: boolean } = {}) => {
+    setToast({ text, ...opts });
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), opts.error ? 9000 : 6000);
+  };
+  const post = async (key: string, action: string, body: object = {}) => {
+    const r = await call("POST", `/api/items/${encodeURIComponent(key)}/${action}`, body, action === "summarize" || action === "draft" ? 30_000 : 8000);
+    return { ...r.data, ok: r.ok, error: r.error } as { ok: boolean; error?: string; [k: string]: any };
+  };
+  const move = (delta: number) => setSelKey(flat[Math.max(0, Math.min(flat.length - 1, idx + delta))]?.itemKey ?? null);
+
+  /** One way to act on any object, whether it is selected in the inbox, open in the drawer or a relationship. */
+  const actOn = async (item: Item | undefined, action: string, body: object = {}, okText?: string, undoable = false) => {
+    if (!item) return;
+    const key = item.itemKey;
+    const nextKey = flat[idx + 1]?.itemKey ?? flat[idx - 1]?.itemKey ?? null;
+    // completing a reminder shows a drawn check for a beat before the row leaves; other exits are AnimatePresence
+    if (action === "complete") { setDoneKey(key); await new Promise((r) => setTimeout(r, 480)); }
+    setBusy(action);
+    const r = await post(key, action, body);
+    setBusy(null);
+    if (action === "complete") setDoneKey(null);
+    if (!r.ok) { say(r.error ?? "Failed", { error: true }); return r; }
+    if (okText) say(okText, undoable ? { undo: async () => { await post(key, "restore"); await load(); } } : {});
+    if (["dismiss", "snooze"].includes(action) && key === current?.itemKey) setSelKey(nextKey);
+    await load();
+    if (action === "board") await loadBoard();
+    return r;
+  };
+  const act = (action: string, body: object = {}, okText?: string, undoable = false) => actOn(current, action, body, okText, undoable);
+
+  const defaultN = data?.ui.summaryDefault ?? 20;
+  const summarize = async (n = sumN ?? defaultN) => {
+    if (!current?.itemKey.startsWith("chat:")) return say("Summaries are for WhatsApp chats.", { error: true });
+    say(`Summarising the last ${n} messages…`);
+    const r = await act("summarize", { n });
+    if (r?.summary) say(`Summary ready (last ${r.summary.n} messages).`);
+  };
+  const setDefaultN = async (n: number) => {
+    const r = await call("POST", "/api/settings", { changes: { summaryDefault: n } });
+    if (!r.ok) return say(r.error ?? "Could not save", { error: true });
+    say(`Default is now ${n} messages.`);
+    await load();
+  };
+  const setMode = async (m: LlmMode) => {
+    if (!current) return;
+    await post(current.itemKey, "llm-mode", { mode: m });
+    say(m === "auto" ? "Auto: new activity in this chat is summarised and drafted for you (never sent)." : m === "never" ? "Never: this chat's text will not be sent to Claude." : "Manual: Claude only sees this chat when you press a key.");
+    await load();
+  };
+  /** One verb for any message or comment: make it a board card that links back to where it came from. */
+  const makeCard = async (item: Item, eventId: string) => {
+    const r = await call("POST", `/api/items/${encodeURIComponent(item.itemKey)}/card-from-event`, { eventId });
+    if (!r.ok) return say(r.error ?? "Could not make a card", { error: true });
+    const id = r.data.id as number;
+    say("Card added to the board.", { undo: async () => { await call("DELETE", `/api/board/cards/${id}`); await loadBoard(); } });
+    await loadBoard();
+  };
+  const copy = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); say("Draft copied. Paste it into WhatsApp yourself; this tool never sends."); } catch { say("Copy failed", { error: true }); }
+  };
+
+  const opsFor = (item: Item): Ops => ({
+    open: (url) => window.open(url, "_blank", "noopener"),
+    board: () => void actOn(item, "board", {}, "Added to the board."),
+    snooze: () => void actOn(item, "snooze", {}, `Snoozed for ${data?.ui.snoozeHours ?? 4} hour(s).`, true),
+    dismiss: () => void actOn(item, "dismiss", {}, "Dismissed. New activity brings it back.", true),
+    transition: () => (item.ticketKey ? setModal({ kind: "transition", item, picked: null }) : say("No linked Jira ticket.", { error: true })),
+    comment: () => (item.ticketKey ? setModal({ kind: "comment", item, text: "" }) : say("No linked Jira ticket.", { error: true })),
+    complete: () => void actOn(item, "complete", {}, "Reminder completed."),
+    remind: () => void actOn(item, "remind", {}, `Reminder created (due in ${data?.ui.remindHours ?? 2}h).`),
+  });
+
+  // ---- board ----
+  const cols = board ? board.columns.map((c) => board.cards.filter((x) => x.col === c)) : [];
+  const cardPos = (id: number | null): [number, number] | null => {
+    for (let c = 0; c < cols.length; c++) { const i = cols[c]!.findIndex((x) => x.id === id); if (i >= 0) return [c, i]; }
+    return null;
+  };
+  const moveCardTo = async (id: number, col: string, index?: number) => {
+    const r = await call("PATCH", `/api/board/cards/${id}`, { col, index });
+    if (!r.ok) say(r.error ?? "Could not move the card", { error: true });
+    await loadBoard();
+  };
+  const addCardTo = async (col: string, title: string) => {
+    const r = await call("POST", "/api/board/cards", { title, col });
+    if (!r.ok) return say(r.error ?? "Could not add the card", { error: true });
+    say(`Added to ${col}.`);
+    await loadBoard();
+    setCardSel(r.data.id);
+  };
+  const selCard: BoardCard | undefined = board?.cards.find((c) => c.id === cardSel) ?? (cols.flat()[0] as BoardCard | undefined);
+  const goTo = (key: string) => { setDrawer(null); setView("inbox"); setSelKey(key); };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (view === "settings") return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (e.metaKey && e.key === "Enter" && modal?.kind === "comment" && modal.text.trim()) {
+        e.preventDefault();
+        const m = modal;
+        actOn(m.item, "comment", { text: m.text, confirm: true }, "Comment posted to Jira.").then(() => setModal(null));
+        return;
+      }
+      if (tag === "INPUT" || tag === "TEXTAREA") { if (e.key === "Escape") { setModal(null); setAdding(null); } return; }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (modal?.kind === "transition") {
+        if (e.key === "Escape") return setModal(null);
+        const n = Number(e.key);
+        if (n >= 1 && n <= (data?.transitions.length ?? 0)) return setModal({ ...modal, picked: data!.transitions[n - 1]! });
+        if (e.key === "Enter" && modal.picked) { const m = modal; actOn(m.item, "transition", { status: m.picked, confirm: true }, `Moved ${m.item.ticketKey} to ${m.picked}.`).then(() => setModal(null)); }
+        return;
+      }
+      if (modal) { if (e.key === "Escape") setModal(null); return; }
+      if (drawer !== null && e.key === "Escape") return setDrawer(null);
+
+      const keys = data?.ui.keys;
+      if (!keys) return;
+      const action: ActionId | undefined = (Object.keys(keys) as ActionId[]).find((a) => keys[a] === e.key);
+      const a = e.key === "ArrowDown" ? "down" : e.key === "ArrowUp" ? "up" : e.key === "Enter" ? "open" : action;
+
+      if (a === "viewInbox") return setView("inbox");
+      if (a === "viewBoard") return setView("board");
+      if (a === "settings") return setView("settings");
+      if (a === "help") return setModal({ kind: "help" });
+      if (a === "undo") { if (toast?.undo) { toast.undo(); setToast(null); } return; }
+      if (a === "refresh") { call("POST", "/api/poll", undefined, 30_000).then(() => { load(); loadBoard(); }); say("Refreshing…"); return; }
+
+      if (view === "board") {
+        const [ci, i] = cardPos(selCard?.id ?? null) ?? [0, 0];
+        const pick = (c: number, row: number) => { const col = cols[c]; if (col?.length) setCardSel(col[Math.max(0, Math.min(row, col.length - 1))]!.id); };
+        switch (a) {
+          case "down": e.preventDefault(); pick(ci, i + 1); break;
+          case "up": e.preventDefault(); pick(ci, i - 1); break;
+          case "colLeft": for (let c = ci - 1; c >= 0; c--) if (cols[c]!.length) { pick(c, i); break; } break;
+          case "colRight": for (let c = ci + 1; c < cols.length; c++) if (cols[c]!.length) { pick(c, i); break; } break;
+          case "moveLeft": if (selCard && ci > 0) moveCardTo(selCard.id, board!.columns[ci - 1]!); break;
+          case "moveRight": if (selCard && ci < cols.length - 1) moveCardTo(selCard.id, board!.columns[ci + 1]!); break;
+          case "newCard": e.preventDefault(); setAdding(board!.columns[ci] ?? board!.columns[0]!); break;
+          case "open": if (selCard) setDrawer(selCard.id); break;
+        }
+        return;
+      }
+
+      const ops = current ? opsFor(current) : null;
+      switch (a) {
+        case "down": e.preventDefault(); move(1); break;
+        case "up": e.preventDefault(); move(-1); break;
+        case "dismiss": ops?.dismiss(); break;
+        case "snooze": ops?.snooze(); break;
+        case "accept": act("accept", {}, "Accepted."); break;
+        case "open": if (current?.url) ops?.open(current.url); break;
+        case "judge": say("Judging…"); call("POST", "/api/judge", undefined, 60_000).then((r) => { say(r.ok ? `Judged ${r.data.judged} item(s).` : r.error ?? "Could not judge", { error: !r.ok }); load(); }); break;
+        case "group": setGrouping(mode === "verdict" ? "lane" : "verdict"); break;
+        case "remind": ops?.remind(); break;
+        case "complete": ops?.complete(); break;
+        case "summarize": summarize(); break;
+        case "mode": if (current?.llmMode) setMode(({ manual: "auto", auto: "never", never: "manual" } as const)[current.llmMode]); break;
+        case "draft": if (current) { say("Drafting…"); act("draft", {}).then((r) => r?.draft && say("Draft ready.")); } break;
+        case "copy": if (current?.draft) copy(current.draft); break;
+        case "addToBoard": ops?.board(); break;
+        case "transition": e.preventDefault(); ops?.transition(); break;
+        case "comment": e.preventDefault(); ops?.comment(); break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  useEffect(() => { document.querySelector(".row.selected")?.scrollIntoView({ block: "nearest" }); }, [selKey, data]);
+
+
+  if (!data) return <div className="loading">Loading…</div>;
+  const keys = data.ui.keys;
+  const down = data.statuses.filter((s) => !s.ok || s.banner);
+  const drawerCard = board?.cards.find((c) => c.id === drawer);
+  const today = new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+
+  const relatedNode = (item: Item) => {
+    const rel = related(item, data.items);
+    const card = board?.cards.find((c) => c.itemKey === item.itemKey);
+    if (!rel.length && !card) return null;
+    if (item.itemKey.startsWith("chat:")) {
+      // a conversation keeps its related objects to one quiet line so the chat gets the room
+      return (
+        <div className="relline rel">
+          {rel.map((o) => <button key={o.itemKey} data-key={o.itemKey} onClick={() => goTo(o.itemKey)}><Glyph kind={kindOf(o.itemKey)} size={13} />{o.itemKey.startsWith("ticket:") ? o.itemKey.slice(7) : o.title}</button>)}
+          {card && <span>On the board · {card.col}</span>}
+        </div>
+      );
+    }
+    return (
+      <section className="section rel">
+        <h4>Related</h4>
+        {rel.map((o) => <ObjectRow key={o.itemKey} item={o} now={data.now} detail="why" selected={false} animateLayout={false} onSelect={goTo} />)}
+        {card && <div className="why" style={{ padding: "6px 0 0" }}>On the board · <b style={{ fontWeight: 560 }}>{card.col}</b></div>}
+      </section>
+    );
+  };
+
+  return (
+    <UiProvider>
+    <div className="shell">
+      <aside className="rail">
+        <div className="brand"><i /><span className="brandname">Work Inbox</span>{data.demo && <small>{data.harsh ? "harsh" : "demo"}</small>}</div>
+        <LayoutGroup id="nav">
+          <NavButton icon={InboxIcon} label="Inbox" count={flat.length} on={view === "inbox"} onClick={() => setView("inbox")} />
+          <NavButton icon={KanbanIcon} label="Board" count={board?.cards.length ?? 0} on={view === "board"} onClick={() => setView("board")} />
+          <NavButton icon={SettingsIcon} label="Settings" on={view === "settings"} onClick={() => setView("settings")} />
+        </LayoutGroup>
+        <div className="spacer" />
+        <button className={`health ${down.length ? "bad" : ""}`} onClick={() => setView("settings")} title={data.statuses.map((s) => `${SOURCE_LABEL[s.source]}: ${s.ok && !s.banner ? "ok" : s.banner ?? s.error}`).join("\n")}>
+          <i /><span className="healthtxt">{down.length ? `${down.map((s) => SOURCE_LABEL[s.source]).join(", ")} down` : "all sources live"}</span>
+        </button>
+        <div className="hint"><kbd>{keys.help}</kbd><span className="healthtxt"> keys</span></div>
+      </aside>
+
+      <div className="main">
+        <div className="topbar">
+          <h1>{view === "inbox" ? "Inbox" : view === "board" ? "Board" : "Settings"}</h1>
+          <span className="sub">{view === "settings" ? "changes save instantly · tokens go to the Keychain" : today}{view === "inbox" && data.hiddenCount ? ` · ${data.hiddenCount} hidden` : ""}</span>
+          {view === "board" && <div className="actions"><NewCardButton onClick={() => setAdding(board?.columns[0] ?? null)} /></div>}
+        </div>
+        {!conn.ok && (
+          <div className="banner conn" role="alert"><b>Can't reach the app.</b> Showing what I had from {ago(conn.lastOk, Date.now())}. Reconnecting automatically{conn.failures > 1 ? ` (attempt ${conn.failures})` : ""}. <button className="link" onClick={() => { load(); loadBoard(); }}>Retry now</button></div>
+        )}
+        {view !== "settings" && down.map((s) => (
+          <div key={s.source} className="banner"><b>{SOURCE_LABEL[s.source]}:</b> {s.banner ?? s.error ?? "problem"}{!s.banner && " Items from this source may be missing, not absent."}</div>
+        ))}
+
+        {view === "settings" && <Settings onClose={() => { setView("inbox"); load(); loadBoard(); }} onChanged={() => { load(); loadBoard(); }} />}
+
+        {visited.has("inbox") && (
+          <div className="split" hidden={view !== "inbox"}>
+            <div className="list" data-testid="list">
+              {flat.length === 0 && <div className="empty">Nothing needs you right now.</div>}
+              <InboxGroups groups={groups} now={data.now} mode={mode} doneKey={doneKey} animateLayout={flat.length <= 80} onSelect={setSelKey} />
+            </div>
+            <aside className={`detail ${current?.itemKey.startsWith("chat:") ? "chatmode" : ""}`}>
+              {!current ? <div className="empty">Select an item</div> : current.itemKey.startsWith("chat:") ? (
+                <Chat item={current} now={data.now} busy={busy} defaultN={defaultN} n={sumN ?? defaultN} presets={data.ui.summaryPresets} keys={keys}
+                  verbs={[
+                    { id: "draft", label: "Draft reply", key: keys.draft, onClick: () => { say("Drafting…"); act("draft", {}).then((r) => r?.draft && say("Draft ready.")); } },
+                    ...verbsFor(current, opsFor(current), keys, urlsOf(current)).filter((v) => ["board", "snooze", "dismiss"].includes(v.id)),
+                  ]}
+                  relatedNode={relatedNode(current)} onCard={(eid) => makeCard(current, eid)} onCopy={copy} setN={setSumN} onSummarize={summarize} onDefault={setDefaultN} onMode={setMode} />
+              ) : (
+                <ObjectView item={current} now={data.now} keys={keys} ops={opsFor(current)} relatedNode={relatedNode(current)} onCard={(eid) => makeCard(current, eid)} />
+              )}
+            </aside>
+          </div>
+        )}
+
+        {visited.has("board") && board && (
+          <Board hidden={view !== "board"} board={board} now={data.now} sel={selCard?.id ?? null} onSelect={setCardSel} onOpen={setDrawer} onMove={moveCardTo} onAdd={addCardTo} adding={adding} setAdding={setAdding} />
+        )}
+      </div>
+
+      <Drawer open={!!drawerCard} onClose={() => setDrawer(null)} title={drawerCard?.title ?? "Card"}>
+        {drawerCard && (
+          <CardDrawer card={drawerCard} item={data.items.find((i) => i.itemKey === drawerCard.itemKey)} now={data.now} keys={keys} ops={(i) => opsFor(i)} relatedNode={relatedNode} goTo={goTo}
+            onSave={async (patch) => { const r = await call("PATCH", `/api/board/cards/${drawerCard.id}`, patch); if (!r.ok) say(r.error ?? "Could not save", { error: true }); await loadBoard(); }}
+            onDelete={async () => { const r = await call("DELETE", `/api/board/cards/${drawerCard.id}`); if (!r.ok) return say(r.error ?? "Could not remove", { error: true }); setDrawer(null); await loadBoard(); say("Card removed."); }} />
+        )}
+      </Drawer>
+
+      <AnimatePresence>
+        {toast && (
+          <motion.div key={toast.text} className={`toast ${toast.error ? "err" : ""}`} role="status" style={{ x: "-50%" }}
+            initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.97 }} transition={{ type: "spring", stiffness: 420, damping: 32 }}>
+            {toast.text}{toast.undo && <button onClick={() => { toast.undo!(); setToast(null); }}>Undo</button>}
+            <motion.span className="timer" initial={{ scaleX: 1 }} animate={{ scaleX: 0 }} transition={{ duration: toast.error ? 9 : 6, ease: "linear" }} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <Modal open={modal?.kind === "transition"} onClose={() => setModal(null)} title={modal?.kind === "transition" ? `Move ${modal.item.ticketKey}` : ""}>
+        {modal?.kind === "transition" && (
+          <>
+            <ol className="choices">{data.transitions.map((t, i) => <li key={t} className={modal.picked === t ? "picked" : ""}><kbd>{i + 1}</kbd> {t}</li>)}</ol>
+            <p className="dim">{modal.picked ? <>Press <kbd>Enter</kbd> to confirm moving to <b>{modal.picked}</b>, or <kbd>Esc</kbd> to cancel.</> : "Pick a status. Nothing is written to Jira until you confirm."}</p>
+          </>
+        )}
+      </Modal>
+      <Modal open={modal?.kind === "comment"} onClose={() => setModal(null)} title={modal?.kind === "comment" ? `Comment on ${modal.item.ticketKey}` : ""}>
+        {modal?.kind === "comment" && (
+          <>
+            <textarea autoFocus value={modal.text} onChange={(e) => setModal({ ...modal, text: e.target.value })} placeholder="Write a comment…" />
+            <p className="dim"><kbd>⌘</kbd> <kbd>Enter</kbd> posts to Jira · <kbd>Esc</kbd> cancels</p>
+          </>
+        )}
+      </Modal>
+      <Modal open={modal?.kind === "help"} onClose={() => setModal(null)} title="Keys" wide>
+        <div className="keygrid">{(Object.keys(ACTIONS) as ActionId[]).map((a) => <div key={a} className="keyrow"><span>{ACTIONS[a].label}</span><kbd>{keys[a]}</kbd></div>)}</div>
+        <p className="dim">Code fetches and flags; Claude only judges and drafts. Nothing is ever sent to WhatsApp, and Jira is only written to after you confirm. Rebind keys in Settings.</p>
+      </Modal>
+    </div>
+    </UiProvider>
+  );
+}
+
+const InboxGroups = memo(function InboxGroups({ groups, now, mode, doneKey, animateLayout, onSelect }: { groups: ReturnType<typeof buildGroups<Item>>; now: number; mode: "verdict" | "lane"; doneKey: string | null; animateLayout: boolean; onSelect: (k: string) => void }) {
+  return (
+    <>
+      {groups.map((g) => {
+        let n = 0;
+        return (
+          <section key={g.id} className="group">
+            <h2>{g.title} <em>{g.items.length}</em></h2>
+            <AnimatePresence mode="popLayout">
+              {g.items.map((it) => <ObjectRow key={it.itemKey} item={it} now={now} index={n++} detail={mode === "verdict" ? "reason" : "why"} done={doneKey === it.itemKey} animateLayout={animateLayout} onSelect={onSelect} />)}
+            </AnimatePresence>
+          </section>
+        );
+      })}
+    </>
+  );
+});
+
+function Thread({ events, now, onCard }: { events: Item["events"]; now: number; onCard?: (eventId: string) => void }) {
+  return (
+    <ol className="thread">
+      {events.map((e, i) => (
+        <li key={i} className={e.mentionsMe ? "mention" : ""}>
+          <div className="who"><b>{e.authorIsMe ? "You" : e.author}</b><span className="dim mono" style={{ fontSize: 11 }}>{SOURCE_LABEL[e.source]}</span><small>{ago(e.ts, now)}</small>{onCard && <MakeCard onClick={() => onCard(e.id)} />}</div>
+          <div className="body">{e.body}</div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The one full representation of a Ticket / PR / Reminder. Used by the inbox detail and the board drawer. */
+function ObjectView({ item, now, keys, ops, relatedNode, onCard }: { item: Item; now: number; keys: Keymap; ops: Ops; relatedNode: React.ReactNode; onCard?: (eventId: string) => void }) {
+  const kind = kindOf(item.itemKey);
+  const w = why(item);
+  return (
+    <div className="ov">
+      <div className="kicker"><Glyph kind={kind} size={14} />{KIND_LABEL[kind]}{item.ticketKey && kind === "ticket" ? ` · ${item.ticketKey}` : ""}{item.verdict ? ` · ${VERDICT_LABEL[item.verdict].toLowerCase()}` : ""}</div>
+      <h3 className="title">{item.title}</h3>
+      {w && <p className="whyline"><Lamp tone={w.tone} />{w.text}{item.flags.length > 1 ? ` + ${item.flags.length - 1} more` : ""}</p>}
+      {item.reason && <p className="reason">{item.reason}</p>}
+      <Verbs verbs={verbsFor(item, ops, keys, urlsOf(item))} />
+      {relatedNode}
+      {item.events.length > 0 && <section className="section"><h4>Activity</h4><Thread events={item.events} now={now} onCard={onCard} /></section>}
+    </div>
+  );
+}
+
+function CardDrawer({ card, item, now, keys, ops, relatedNode, goTo, onSave, onDelete }: { card: BoardCard; item?: Item; now: number; keys: Keymap; ops: (i: Item) => Ops; relatedNode: (i: Item) => React.ReactNode; goTo: (key: string) => void; onSave: (p: object) => Promise<void>; onDelete: () => void }) {
+  const [title, setTitle] = useState(card.title);
+  const [notes, setNotes] = useState(card.notes);
+  useEffect(() => { setTitle(card.title); setNotes(card.notes); }, [card.id]);
+  return (
+    <div className="ov" style={{ marginTop: 24 }}>
+      {item ? <ObjectView item={item} now={now} keys={keys} ops={ops(item)} relatedNode={relatedNode(item)} /> : (
+        <>
+          <div className="kicker"><Glyph kind="note" size={14} />Note</div>
+          <input className="tt" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={() => title.trim() && title !== card.title && onSave({ title })} />
+        </>
+      )}
+      {card.originLabel && (
+        <p className="origin">Made from a message · <b>{card.originLabel}</b>
+          {card.originKey && <button className="link" onClick={() => goTo(card.originKey!)}>Open it</button>}
+          {card.originUrl && <a className="link" href={card.originUrl} target="_blank" rel="noopener noreferrer">Source ↗</a>}
+        </p>
+      )}
+      {card.sources.includes("jira") && card.itemKey && <p className="origin dim">Synced from Jira, one way. Moving this card does not change Jira; use <b>Move</b> on the ticket for that.</p>}
+      <section className="section">
+        <h4>On the board · {card.col}</h4>
+        <textarea rows={4} value={notes} placeholder="Notes…" onChange={(e) => setNotes(e.target.value)} onBlur={() => notes !== card.notes && onSave({ notes })} />
+        <div className="verbs" style={{ marginTop: 10 }}>
+          {card.pinned && <button className="verb" onClick={() => onSave({ pinned: false })}>◆ Placed by hand · let automation place it</button>}
+          <button className="verb" onClick={onDelete}>Remove from board</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NavButton({ icon: Icon, label, count, on, onClick }: { icon: typeof InboxIcon; label: string; count?: number; on: boolean; onClick: () => void }) {
+  const h = useIconHover();
+  return (
+    <button className={`nav ${on ? "on" : ""}`} onClick={onClick} {...h.triggerProps}>
+      {on && <motion.span layoutId="navpill" className="navpill" transition={{ type: "spring", stiffness: 520, damping: 42 }} />}
+      <span className="navicon"><Icon ref={h.ref} size={16} /></span>
+      <span className="navlabel">{label}</span>{count !== undefined && <span className="n">{count}</span>}
+    </button>
+  );
+}
+
+function NewCardButton({ onClick }: { onClick: () => void }) {
+  const h = useIconHover();
+  return <button className="pill primary" onClick={onClick} {...h.triggerProps}><PlusIcon ref={h.ref} size={14} />New card</button>;
+}

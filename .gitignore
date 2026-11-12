@@ -1,11 +1,10 @@
 node_modules
-dist
-dist-electron
 .env
 *.log
 .DS_Store
-release
-build
-server/data/
-
-notes.db*
+data/
+*.db
+*.db-*
+shots/
+test-results/
+playwright-report/
