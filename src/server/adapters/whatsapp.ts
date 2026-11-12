@@ -4,6 +4,7 @@ import { setStatus } from "../poller";
 import { upsertEvents } from "../store";
 import { getSetting, setSetting } from "../chatllm";
 import type { NormalizedEvent, SourceAdapter } from "../types";
+import { current, type Maybe } from "./maybe";
 
 /**
  * WhatsApp via WAHA (linked device). STRICTLY READ-ONLY: the only outbound calls this module can make are GETs
@@ -29,12 +30,13 @@ export async function wahaGet(d: WahaDeps, path: string): Promise<any> {
   return res.json();
 }
 
-export function createWhatsappAdapter(deps: WahaDeps | null): SourceAdapter {
+export function createWhatsappAdapter(depsIn: Maybe<WahaDeps>): SourceAdapter {
   return {
     source: "whatsapp",
-    configured: () => deps !== null,
+    configured: () => current(depsIn) !== null,
     fetch: async () => [], // push source: events arrive through the webhook
     health: async () => {
+      const deps = current(depsIn);
       try {
         const s = await wahaGet(deps!, `/api/sessions/${encodeURIComponent(deps!.cfg.session)}`);
         return statusBanner(s?.status);
@@ -68,6 +70,8 @@ export interface ParseOpts {
   chatName: string;
   /** Force the chat id (history endpoints don't always carry a usable from/to) */
   chatId?: string;
+  /** In 1:1 chats every incoming message is addressed to me (default true) */
+  dmAddressesMe?: boolean;
 }
 
 /** Normalise one WAHA message payload. Returns null for things we ignore (status broadcasts, empty events). */
@@ -102,7 +106,7 @@ export function parseWahaMessage(p: any, o: ParseOpts): NormalizedEvent | null {
     url: null,
     ts: (Number(p.timestamp) || Math.floor(Date.now() / 1000)) * 1000,
     // In a 1:1 work chat every incoming message is addressed to me.
-    mentionsMe: !fromMe && (mentionedMe || quotesMe || !isGroup),
+    mentionsMe: !fromMe && (mentionedMe || quotesMe || (!isGroup && o.dmAddressesMe !== false)),
     meta: { isGroup, quotesMe, mentionedMe, chatId },
   };
 }
@@ -144,7 +148,7 @@ export async function backfillChat(db: DB, deps: WahaDeps, itemKey: string, n: n
   if (!Array.isArray(rows)) return 0;
   const name = chatNameFor(db, chatId) ?? "";
   const events = rows
-    .map((p) => parseWahaMessage(p, { myIds: getMyIds(db, deps.cfg), chatName: name, chatId }))
+    .map((p) => parseWahaMessage(p, { myIds: getMyIds(db, deps.cfg), chatName: name, chatId, dmAddressesMe: deps.cfg.dmAddressesMe }))
     .filter((e): e is NormalizedEvent => e !== null);
   upsertEvents(db, events);
   return events.length;
@@ -180,7 +184,7 @@ export async function handleWahaWebhook(db: DB, deps: WahaDeps, body: any, now =
     if (name) saveChatName(db, chatId, name, false);
   }
 
-  const ev = parseWahaMessage(p, { myIds, chatName: name ?? "" });
+  const ev = parseWahaMessage(p, { myIds, chatName: name ?? "", dmAddressesMe: deps.cfg.dmAddressesMe });
   if (!ev) return { handled: true, stored: 0, reason: "ignored message" };
   upsertEvents(db, [ev]);
   setStatus(db, { source: "whatsapp", ok: true, lastPollAt: now, error: null, banner: null });

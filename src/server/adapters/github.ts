@@ -1,17 +1,23 @@
 import { firstTicketKey, keyFromBranch } from "../linker";
 import type { NormalizedEvent, SourceAdapter } from "../types";
+import { current, type Maybe } from "./maybe";
 
 export interface GithubDeps {
   token: string;
   username: string;
   fetchImpl?: typeof fetch;
+  /** Extra bot logins to ignore (accounts ending in [bot] are always ignored) */
+  bots?: string[];
+  reviewRequests?: boolean;
+  myPrs?: boolean;
+  mentions?: boolean;
 }
 
-export function createGithubAdapter(deps: GithubDeps | null): SourceAdapter {
+export function createGithubAdapter(deps: Maybe<GithubDeps>): SourceAdapter {
   return {
     source: "github",
-    configured: () => deps !== null,
-    fetch: () => fetchGithub(deps!),
+    configured: () => current(deps) !== null,
+    fetch: () => fetchGithub(current(deps)!),
   };
 }
 
@@ -25,10 +31,12 @@ async function fetchGithub(d: GithubDeps): Promise<NormalizedEvent[]> {
     return res.json() as Promise<any>;
   };
   const u = d.username;
+  const search = (q: string) => get(`/search/issues?q=${encodeURIComponent(`is:pr is:open ${q}:${u}`)}&per_page=30`);
+  const none = Promise.resolve({ items: [] });
   const [reviewing, mine, mentioned] = await Promise.all([
-    get(`/search/issues?q=${encodeURIComponent(`is:pr is:open review-requested:${u}`)}&per_page=30`),
-    get(`/search/issues?q=${encodeURIComponent(`is:pr is:open author:${u}`)}&per_page=30`),
-    get(`/search/issues?q=${encodeURIComponent(`is:pr is:open mentions:${u}`)}&per_page=30`),
+    d.reviewRequests === false ? none : search("review-requested"),
+    d.myPrs === false ? none : search("author"),
+    d.mentions === false ? none : search("mentions"),
   ]);
 
   const seen = new Map<string, { issue: any; reviewRequested: boolean; mine: boolean }>();
@@ -72,7 +80,7 @@ async function fetchGithub(d: GithubDeps): Promise<NormalizedEvent[]> {
     ]);
     const push = (c: any, prefix: string, text: string) => {
       const login = c.user?.login ?? "";
-      if (isBot(login)) return;
+      if (isBot(login, d.bots)) return;
       events.push({
         ...base, sourceId: `${prefix}:${repo}#${n}:${c.id}`, kind: "pr_comment", author: login, authorIsMe: login.toLowerCase() === u.toLowerCase(),
         body: text, url: c.html_url ?? base.url, ts: Date.parse(c.updated_at ?? c.submitted_at ?? c.created_at) || Date.now(),
@@ -86,6 +94,8 @@ async function fetchGithub(d: GithubDeps): Promise<NormalizedEvent[]> {
   return events;
 }
 
-export function isBot(login: string): boolean {
-  return /\[bot\]$|^(dependabot|github-actions|renovate|codecov)/i.test(login);
+const DEFAULT_BOTS = ["dependabot", "github-actions", "renovate", "codecov"];
+export function isBot(login: string, bots: string[] = DEFAULT_BOTS): boolean {
+  const l = login.toLowerCase();
+  return l.endsWith("[bot]") || bots.some((b) => b.trim() && l === b.trim().toLowerCase().replace(/\[bot\]$/, ""));
 }

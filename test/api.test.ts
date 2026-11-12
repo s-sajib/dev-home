@@ -5,13 +5,15 @@ import { openDb } from "../src/server/db";
 import { demoRunner, seedDemo } from "../src/server/demo";
 import { rebuildItems } from "../src/server/inbox";
 import { judgeItems } from "../src/server/claude";
+import { memoryStore } from "../src/server/secrets";
+import { ConfigManager } from "../src/server/settings";
 
 const make = (env: Record<string, string> = {}, extra: any = {}) => {
   const cfg = loadConfig({ WORK_INBOX_DEMO: "1", ...env });
   const db = openDb(":memory:");
   seedDemo(db);
   rebuildItems(db, { now: Date.now(), staleDays: 5, replyHours: 4 });
-  const api = createApi({ db, cfg, adapters: [], run: demoRunner, ...extra });
+  const api = createApi({ db, cfg, adapters: [], run: demoRunner, settings: new ConfigManager(cfg, db, memoryStore(), {}), ...extra });
   const call = async (method: string, path: string, body?: unknown) => {
     const res = await api(new Request(`http://x${path}`, { method, body: body ? JSON.stringify(body) : undefined }));
     return { status: res!.status, json: (await res!.json()) as any };

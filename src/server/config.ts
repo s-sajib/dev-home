@@ -1,29 +1,6 @@
-export interface Config {
-  dbPath: string;
-  port: number;
-  demo: boolean;
-  staleDays: number;
-  replyHours: number;
-  /** Nag window, local time. End may be earlier than start to cross midnight (8 -> 1 means 08:00 to 01:00). */
-  workStartHour: number;
-  workEndHour: number;
-  /** 0 = Sunday ... 6 = Saturday */
-  workDays: number[];
-  /** Default number of messages for WhatsApp summaries (editable in the UI) */
-  summaryDefault: number;
-  pollIntervalMs: number;
-  /** Claude Code CLI used in print mode (`claude -p`) for verdicts and drafts. */
-  claudeBin: string;
-  claudeModel: string | null;
-  autoJudge: boolean;
-  host: string;
-  jira: { baseUrl: string; email: string; token: string } | null;
-  github: { token: string; username: string } | null;
-  reminders: { list: string; enabled: boolean };
-  whatsapp: WhatsappConfig | null;
-  /** Status names offered on the `t` key */
-  transitions: string[];
-}
+import type { Keymap } from "../shared/keys";
+import { buildConfig } from "./settings";
+import type { Flag } from "./types";
 
 export interface WhatsappConfig {
   wahaUrl: string;
@@ -33,51 +10,67 @@ export interface WhatsappConfig {
   webhookToken: string;
   /** Any of these JIDs / LIDs / bare numbers counts as "me" */
   myIds: string[];
+  /** In 1:1 chats every incoming message is addressed to me */
+  dmAddressesMe: boolean;
 }
 
-function num(v: string | undefined, d: number): number {
-  const n = v === undefined ? NaN : Number(v);
-  return Number.isFinite(n) ? n : d;
+/**
+ * Effective configuration. Built from defaults < environment < saved settings (the Settings screen) and
+ * mutated in place when a setting changes, so code reading `cfg.x` always sees the live value.
+ */
+export interface Config {
+  // process-level (restart needed)
+  dbPath: string;
+  port: number;
+  host: string;
+  demo: boolean;
+
+  // timing & rules
+  pollIntervalMs: number;
+  staleDays: number;
+  replyHours: number;
+  disabledFlags: Flag[];
+  ignoreAuthors: string[];
+
+  // nag
+  nagEnabled: boolean;
+  /** Nag window, local time. End may be earlier than start to cross midnight (8 -> 1 means 08:00 to 01:00). */
+  workStartHour: number;
+  workEndHour: number;
+  /** 0 = Sunday ... 6 = Saturday */
+  workDays: number[];
+  /** Minutes between re-nags; the last value repeats */
+  nagIntervalsMin: number[];
+
+  // claude
+  claudeBin: string;
+  claudeModel: string | null;
+  claudeTimeoutSeconds: number;
+  autoJudge: boolean;
+
+  // whatsapp summaries
+  summaryDefault: number;
+  summaryPresets: number[];
+  autoSettleSeconds: number;
+  purgeDays: number;
+  chatDefaultMode: "manual" | "never";
+
+  // ui
+  uiRefreshSeconds: number;
+  defaultGrouping: "auto" | "verdict" | "lane";
+  snoozeHours: number;
+  remindHours: number;
+  keys: Keymap;
+
+  // sources
+  jira: { baseUrl: string; email: string; token: string; lookbackDays: number; jql: string } | null;
+  transitions: string[];
+  github: { token: string; username: string; bots: string[]; reviewRequests: boolean; myPrs: boolean; mentions: boolean } | null;
+  reminders: { list: string; enabled: boolean };
+  whatsapp: WhatsappConfig | null;
 }
 
+/** Environment-only configuration (tests, scripts, first run). Saved settings are layered on by ConfigManager. */
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
-  const jira =
-    env.JIRA_BASE_URL && env.JIRA_EMAIL && env.JIRA_API_TOKEN
-      ? { baseUrl: env.JIRA_BASE_URL.replace(/\/$/, ""), email: env.JIRA_EMAIL, token: env.JIRA_API_TOKEN }
-      : null;
-  const github =
-    env.GITHUB_TOKEN && env.GITHUB_USERNAME ? { token: env.GITHUB_TOKEN, username: env.GITHUB_USERNAME } : null;
-  const wa: WhatsappConfig | null = env.WAHA_URL
-    ? {
-        wahaUrl: env.WAHA_URL.replace(/\/$/, ""),
-        session: env.WAHA_SESSION ?? "default",
-        apiKey: env.WAHA_API_KEY ?? null,
-        webhookToken: env.WAHA_WEBHOOK_TOKEN ?? "",
-        myIds: (env.WA_MY_IDS ?? "").split(",").map((x) => x.trim()).filter(Boolean),
-      }
-    : null;
-  return {
-    dbPath: env.WORK_INBOX_DB ?? "data/work-inbox.db",
-    port: num(env.PORT, 3571),
-    demo: env.WORK_INBOX_DEMO === "1",
-    staleDays: num(env.STALE_DAYS, 5),
-    replyHours: num(env.REPLY_HOURS, 4),
-    workStartHour: num(env.WORK_START_HOUR, 8),
-    workEndHour: num(env.WORK_END_HOUR, 1),
-    workDays: (env.WORK_DAYS ?? "0,1,2,3,4,5,6").split(",").map((x) => Number(x.trim())).filter((n) => n >= 0 && n <= 6),
-    summaryDefault: num(env.SUMMARY_MESSAGES, 20),
-    pollIntervalMs: num(env.POLL_MINUTES, 5) * 60_000,
-    claudeBin: env.CLAUDE_BIN ?? "claude",
-    claudeModel: env.CLAUDE_MODEL ?? null,
-    autoJudge: env.AUTO_JUDGE !== "0",
-    host: env.HOST ?? "127.0.0.1",
-    jira,
-    github,
-    reminders: {
-      list: env.REMINDERS_LIST ?? "Work Inbox",
-      enabled: env.REMINDERS !== "0" && process.platform === "darwin",
-    },
-    whatsapp: wa,
-    transitions: (env.JIRA_TRANSITIONS ?? "In Progress,In Review,Done").split(",").map((x) => x.trim()).filter(Boolean),
-  };
+  return buildConfig(env, {}, {}).config;
 }

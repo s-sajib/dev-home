@@ -1,5 +1,6 @@
 import { firstTicketKey } from "../linker";
 import type { NormalizedEvent, SourceAdapter } from "../types";
+import { current, type Maybe } from "./maybe";
 
 /** Runs a JXA script via osascript and returns stdout. Injected so tests never touch macOS. */
 export type Osa = (script: string) => Promise<string>;
@@ -53,12 +54,14 @@ export function parseReminders(json: string, now: number): NormalizedEvent[] {
   }));
 }
 
-export function createRemindersAdapter(deps: RemindersDeps | null): SourceAdapter {
-  const osa = deps?.osa ?? osascript;
+export function createRemindersAdapter(deps: Maybe<RemindersDeps>): SourceAdapter {
   return {
     source: "reminders",
-    configured: () => deps !== null,
-    fetch: async () => parseReminders(await osa(listScript(deps!.list)), (deps?.now ?? Date.now)()),
+    configured: () => current(deps) !== null,
+    fetch: async () => {
+      const d = current(deps)!;
+      return parseReminders(await (d.osa ?? osascript)(listScript(d.list)), (d.now ?? Date.now)());
+    },
   };
 }
 

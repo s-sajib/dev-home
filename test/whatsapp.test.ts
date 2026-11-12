@@ -5,7 +5,7 @@ import { createWhatsappAdapter, handleWahaWebhook, jidLocal, parseWahaMessage, p
 import { getStatuses, pollOnce } from "../src/server/poller";
 import { rebuildItems } from "../src/server/inbox";
 
-const cfg = { wahaUrl: "http://waha:3000", session: "default", apiKey: "k", webhookToken: "t", myIds: ["15551234567@c.us", "98765432101@lid"] };
+const cfg = { wahaUrl: "http://waha:3000", session: "default", apiKey: "k", webhookToken: "t", myIds: ["15551234567@c.us", "98765432101@lid"], dmAddressesMe: true };
 const GROUP = "120363000@g.us";
 const ts = (minsAgo: number) => Math.floor((Date.now() - minsAgo * 60_000) / 1000);
 

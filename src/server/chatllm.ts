@@ -1,6 +1,7 @@
 import type { Config } from "./config";
 import type { DB } from "./db";
 import { listItems } from "./inbox";
+import { runtime } from "./runtime";
 import { redact, type Runner } from "./claude";
 import type { NormalizedEvent } from "./types";
 
@@ -16,7 +17,7 @@ export const LLM_MODES: LlmMode[] = ["manual", "auto", "never"];
 
 export function getMode(db: DB, itemKey: string): LlmMode {
   const r = db.query("SELECT llm_mode FROM chat_settings WHERE item_key = ?").get(itemKey) as { llm_mode: LlmMode } | null;
-  return r?.llm_mode ?? "manual";
+  return r?.llm_mode ?? runtime.chatDefaultMode;
 }
 
 export function setMode(db: DB, itemKey: string, mode: LlmMode) {
@@ -40,8 +41,8 @@ export function clampN(n: unknown, fallback: number): number {
   const v = Math.round(Number(n));
   return Number.isFinite(v) && v > 0 ? Math.min(v, MAX_MESSAGES) : fallback;
 }
-export function summaryDefault(db: DB, cfg: Pick<Config, "summaryDefault">): number {
-  return clampN(getSetting(db, "summary_n"), cfg.summaryDefault);
+export function summaryDefault(_db: DB, cfg: Pick<Config, "summaryDefault">): number {
+  return clampN(cfg.summaryDefault, 20);
 }
 
 /** Last n stored messages of a chat, oldest first. */
@@ -154,7 +155,6 @@ export async function summarizeChat({ db, cfg, run, backfill }: SummarizeDeps, i
   return latestSummary(db, itemKey)!;
 }
 
-const SETTLE_MS = 60_000;
 
 /** Auto mode: chats set to "auto" get a fresh summary (and draft) when new activity has settled. Never sends anything. */
 export async function autoHandleChats(deps: SummarizeDeps, now = Date.now()): Promise<{ handled: number; errors: string[] }> {
@@ -164,7 +164,7 @@ export async function autoHandleChats(deps: SummarizeDeps, now = Date.now()): Pr
   let handled = 0;
   for (const it of listItems(db, now)) {
     if (!it.itemKey.startsWith("chat:") || modes.get(it.itemKey) !== "auto" || it.hidden) continue;
-    if (now - it.lastActivity < SETTLE_MS) continue; // let the conversation settle
+    if (now - it.lastActivity < cfg.autoSettleSeconds * 1000) continue; // let the conversation settle
     if (latestSummary(db, it.itemKey)?.forActivity === it.lastActivity) continue;
     try {
       await summarizeChat(deps, it.itemKey, summaryDefault(db, cfg), now);

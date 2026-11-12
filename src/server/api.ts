@@ -7,7 +7,9 @@ import { completeReminder, createReminder, type RemindersDeps } from "./adapters
 import { handleWahaWebhook } from "./adapters/whatsapp";
 import { draftReply, judgeItems, latestDraft, type Runner } from "./claude";
 import { backfillChat } from "./adapters/whatsapp";
-import { autoHandleChats, clampN, getMode, latestSummary, LLM_MODES, modesByItem, setMode, setSetting, summarizeChat, summaryDefault, type LlmMode } from "./chatllm";
+import { autoHandleChats, clampN, getMode, latestSummary, LLM_MODES, modesByItem, setMode, summarizeChat, summaryDefault, type LlmMode } from "./chatllm";
+import { testConnection, type Exec, type Target } from "./connect-test";
+import type { ConfigManager } from "./settings";
 import { getStatuses, pollOnce } from "./poller";
 import { logAction } from "./store";
 import type { SourceAdapter } from "./types";
@@ -20,14 +22,19 @@ export interface ApiDeps {
   cfg: Config;
   adapters: SourceAdapter[];
   run: Runner;
+  settings: ConfigManager;
+  /** Test seam: overrides the live Reminders settings (and lets tests inject osascript) */
   reminders?: RemindersDeps;
+  fetchImpl?: typeof fetch;
+  exec?: Exec;
 }
 
 /**
  * All writes are explicit, logged commands triggered by a keypress. WhatsApp is never written to.
  * The webhook is the only inbound write path and requires the shared token.
  */
-export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
+export function createApi({ db, cfg, adapters, run, settings, reminders: remindersOverride, fetchImpl, exec }: ApiDeps) {
+  const remindersNow = (): RemindersDeps | undefined => remindersOverride ?? (cfg.reminders.enabled ? { list: cfg.reminders.list } : undefined);
   const ctx = () => ({ now: Date.now(), staleDays: cfg.staleDays, replyHours: cfg.replyHours });
   const refresh = () => rebuildItems(db, ctx());
   const summarizeDeps = () => ({
@@ -65,9 +72,17 @@ export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
         items: items.filter((i) => !i.hidden),
         hiddenCount: items.filter((i) => i.hidden && i.flags.length > 0).length,
         statuses: getStatuses(db),
-        configured: { jira: !!cfg.jira, github: !!cfg.github, reminders: !!reminders, whatsapp: !!cfg.whatsapp },
+        configured: { jira: !!cfg.jira, github: !!cfg.github, reminders: !!remindersNow(), whatsapp: !!cfg.whatsapp },
         transitions: cfg.transitions,
-        settings: { summaryN: summaryDefault(db, cfg) },
+        ui: {
+          refreshSeconds: cfg.uiRefreshSeconds,
+          grouping: cfg.defaultGrouping,
+          snoozeHours: cfg.snoozeHours,
+          remindHours: cfg.remindHours,
+          summaryPresets: cfg.summaryPresets,
+          summaryDefault: summaryDefault(db, cfg),
+          keys: cfg.keys,
+        },
         demo: cfg.demo,
       });
     }
@@ -82,10 +97,24 @@ export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
       await pollOnce(db, adapters, cfg);
       return json({ ok: true });
     }
+    if (method === "GET" && path === "/settings") return json(settings.describe());
     if (method === "POST" && path === "/settings") {
-      const b = (await req.json().catch(() => ({}))) as any;
-      if (b.summaryN !== undefined) setSetting(db, "summary_n", String(clampN(b.summaryN, cfg.summaryDefault)));
-      return json({ ok: true, settings: { summaryN: summaryDefault(db, cfg) } });
+      // body: { changes: { key: value | null } }  (null resets to the default). Secrets are written to the Keychain.
+      const b = (await req.json().catch(() => ({}))) as { changes?: Record<string, unknown> };
+      const errors: Record<string, string> = {};
+      for (const [k, v] of Object.entries(b.changes ?? {})) {
+        try {
+          await settings.set(k, v);
+          logAction(db, null, "setting", { key: k, reset: v === null, secret: /token|apikey/i.test(k) }, true, "saved");
+        } catch (e: any) {
+          errors[k] = String(e?.message ?? e);
+        }
+      }
+      return json({ ok: Object.keys(errors).length === 0, errors, ...settings.describe() }, Object.keys(errors).length ? 400 : 200);
+    }
+    if (method === "POST" && path === "/settings/test") {
+      const b = (await req.json().catch(() => ({}))) as { target?: Target };
+      return json(await testConnection(b.target as Target, cfg, { fetchImpl, exec, osa: remindersOverride?.osa }));
     }
     if (method === "POST" && path === "/auto") {
       return json({ ok: true, ...(await autoHandleChats(summarizeDeps())) });
@@ -120,7 +149,7 @@ export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
         const override = (action === "dismiss" && item.verdict === "needs_me") || (action === "accept" && item.verdict === "drop");
         if (override) logAction(db, itemKey, "verdict_override", { verdict: item.verdict, action }, true, "override");
         if (action === "dismiss") dismissItem(db, itemKey);
-        else if (action === "snooze") snoozeItem(db, itemKey, Date.now() + Number(body.hours ?? 4) * 3_600_000);
+        else if (action === "snooze") snoozeItem(db, itemKey, Date.now() + Number(body.hours ?? cfg.snoozeHours) * 3_600_000);
         logAction(db, itemKey, action, body, true, "ok");
         return json({ ok: true });
       }
@@ -146,8 +175,9 @@ export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
       }
 
       if (action === "remind") {
-        if (!reminders) return fail(400, "Reminders is only available on macOS");
-        const dueAt = Date.now() + Number(body.hours ?? 2) * 3_600_000;
+        const reminders = remindersNow();
+        if (!reminders) return fail(400, "Reminders is off (turn it on in Settings; it needs a Mac)");
+        const dueAt = Date.now() + Number(body.hours ?? cfg.remindHours) * 3_600_000;
         const id = await createReminder(reminders, {
           title: `Follow up: ${item.title}`,
           notes: `${item.url ?? ""}\n${item.itemKey}`.trim(),
@@ -160,6 +190,7 @@ export function createApi({ db, cfg, adapters, run, reminders }: ApiDeps) {
 
       if (action === "complete") {
         const ev = item.itemKey.startsWith("reminder:") ? item.itemKey.slice(9) : null;
+        const reminders = remindersNow();
         if (!reminders || !ev) return fail(400, "Not a reminder");
         await completeReminder(reminders, ev);
         db.query("UPDATE events SET meta = json_set(meta, '$.completed', json('true')) WHERE source = 'reminders' AND source_id = ?").run(`rem:${ev}`);

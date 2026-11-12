@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { createApi } from "../src/server/api";
-import { autoHandleChats, chatMessages, clampN, getMode, latestSummary, setMode, setSetting, summarizeChat, summaryDefault } from "../src/server/chatllm";
+import { autoHandleChats, chatMessages, clampN, getMode, latestSummary, setMode, summarizeChat, summaryDefault } from "../src/server/chatllm";
 import { latestDraft, type Runner } from "../src/server/claude";
 import { loadConfig } from "../src/server/config";
 import { openDb } from "../src/server/db";
 import { demoEvents, demoRunner, seedDemo } from "../src/server/demo";
 import { rebuildItems } from "../src/server/inbox";
+import { memoryStore } from "../src/server/secrets";
+import { ConfigManager } from "../src/server/settings";
 import { upsertEvents } from "../src/server/store";
 import type { NormalizedEvent } from "../src/server/types";
 
@@ -48,11 +50,10 @@ describe("summarize last N messages", () => {
     expect(clampN("37", 20)).toBe(37);
   });
 
-  test("default is 20 and is configurable", () => {
+  test("default is 20 and follows the config", () => {
     const db = openDb(":memory:");
     expect(summaryDefault(db, cfg)).toBe(20);
-    setSetting(db, "summary_n", "100");
-    expect(summaryDefault(db, cfg)).toBe(100);
+    expect(summaryDefault(db, loadConfig({ SUMMARY_MESSAGES: "100" }))).toBe(100);
   });
 
   test("backfills from WAHA only when fewer than N are stored", async () => {
@@ -145,7 +146,8 @@ describe("api", () => {
     const db = openDb(":memory:");
     seedDemo(db);
     rebuildItems(db, { now: Date.now(), staleDays: 5, replyHours: 4 });
-    const api = createApi({ db, cfg: loadConfig({ WORK_INBOX_DEMO: "1" }), adapters: [], run: demoRunner });
+    const c = loadConfig({ WORK_INBOX_DEMO: "1" });
+    const api = createApi({ db, cfg: c, adapters: [], run: demoRunner, settings: new ConfigManager(c, db, memoryStore(), {}) });
     const call = async (method: string, path: string, body?: unknown) => {
       const res = await api(new Request(`http://x${path}`, { method, body: body ? JSON.stringify(body) : undefined }));
       return { status: res!.status, json: (await res!.json()) as any };
@@ -158,9 +160,9 @@ describe("api", () => {
     const r = await call("POST", "/api/items/chat:447700900007@c.us/summarize", { n: 50 });
     expect(r.json.summary.n).toBeLessThanOrEqual(50);
     expect(r.json.summary.replyNeeded).toBe(true);
-    await call("POST", "/api/settings", { summaryN: 100 });
+    await call("POST", "/api/settings", { changes: { summaryDefault: 100 } });
     const inbox = (await call("GET", "/api/inbox")).json;
-    expect(inbox.settings.summaryN).toBe(100);
+    expect(inbox.ui.summaryDefault).toBe(100);
     expect(inbox.items.find((i: any) => i.itemKey === "chat:447700900007@c.us").summary.summary).toContain("Lena");
   });
 

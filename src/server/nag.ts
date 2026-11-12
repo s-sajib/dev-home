@@ -4,11 +4,11 @@ import type { Notifier } from "./notify";
 import { loadEvents, logAction } from "./store";
 
 const MIN = 60_000;
-/** Growing re-nag intervals; the last one repeats. */
-export const NAG_INTERVALS = [15 * MIN, 30 * MIN, 60 * MIN, 2 * 60 * MIN, 4 * 60 * MIN];
+/** Growing re-nag intervals (minutes, configurable); the last one repeats. */
+export const DEFAULT_NAG_MINUTES = [15, 30, 60, 120, 240];
 
-export function nagInterval(count: number): number {
-  return NAG_INTERVALS[Math.min(count, NAG_INTERVALS.length - 1)]!;
+export function nagInterval(count: number, minutes: number[] = DEFAULT_NAG_MINUTES): number {
+  return minutes[Math.min(count, minutes.length - 1)]! * MIN;
 }
 
 /** Inside the configured window and on a work day. Handles windows that cross midnight (8 -> 1). */
@@ -31,8 +31,8 @@ export interface Nag {
   count: number;
 }
 
-export function dueNags(db: DB, cfg: Pick<Config, "workStartHour" | "workEndHour" | "workDays">, now: number): Nag[] {
-  if (!inWorkHours(now, cfg)) return [];
+export function dueNags(db: DB, cfg: Pick<Config, "workStartHour" | "workEndHour" | "workDays"> & Partial<Pick<Config, "nagIntervalsMin" | "nagEnabled">>, now: number): Nag[] {
+  if (cfg.nagEnabled === false || !inWorkHours(now, cfg)) return [];
   const links = new Map(
     (db.query("SELECT * FROM reminder_links").all() as any[]).map((r) => [r.reminder_id as string, r]),
   );
@@ -45,7 +45,7 @@ export function dueNags(db: DB, cfg: Pick<Config, "workStartHour" | "workEndHour
     const link = links.get(id);
     const count = link?.nudge_count ?? 0;
     const base = link?.last_nudged_at ?? due;
-    if (now - base >= nagInterval(count)) out.push({ reminderId: id, title: e.title, itemKey: e.nativeKey, count });
+    if (now - base >= nagInterval(count, cfg.nagIntervalsMin)) out.push({ reminderId: id, title: e.title, itemKey: e.nativeKey, count });
   }
   return out;
 }

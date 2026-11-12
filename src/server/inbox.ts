@@ -1,5 +1,6 @@
 import type { DB } from "./db";
 import { computeFlags, type RuleContext } from "./rules";
+import { runtime } from "./runtime";
 import { loadEvents } from "./store";
 import type { Flag, InboxItem, NormalizedEvent, Source, Verdict } from "./types";
 import { extractTicketKeys } from "./linker";
@@ -14,7 +15,7 @@ const PRIORITY: Flag[] = ["overdue_reminder", "needs_reply", "mentions_me", "rev
 
 /** Recompute items from events, persist them (keeping cached verdicts), and return the visible+hidden list. */
 export function rebuildItems(db: DB, ctx: RuleContext): InboxItem[] {
-  const events = loadEvents(db);
+  const events = visibleEvents(loadEvents(db));
   const groups = new Map<string, NormalizedEvent[]>();
   for (const e of events) {
     const k = itemKeyFor(e);
@@ -64,13 +65,20 @@ export function rebuildItems(db: DB, ctx: RuleContext): InboxItem[] {
   return listItems(db, ctx.now);
 }
 
+/** Activity from ignored authors (automation accounts, noisy people) never counts. */
+export function visibleEvents(events: NormalizedEvent[]): NormalizedEvent[] {
+  const ignore = new Set(runtime.ignoreAuthors.map((a) => a.toLowerCase()));
+  if (ignore.size === 0) return events;
+  return events.filter((e) => e.authorIsMe || !ignore.has(e.author.toLowerCase()));
+}
+
 export function listItems(db: DB, now: number): InboxItem[] {
   const rows = db
     .query(
       `SELECT i.*, s.dismissed_at_activity, s.snoozed_until FROM items i LEFT JOIN state s ON s.item_key = i.item_key`,
     )
     .all() as any[];
-  const events = loadEvents(db);
+  const events = visibleEvents(loadEvents(db));
   const byItem = new Map<string, NormalizedEvent[]>();
   for (const e of events) {
     const k = itemKeyFor(e);

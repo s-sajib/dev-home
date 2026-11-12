@@ -1,4 +1,5 @@
 import type { NormalizedEvent, SourceAdapter } from "../types";
+import { current, type Maybe } from "./maybe";
 
 /** Atlassian Document Format helpers. Mention nodes carry the account id, which is what "mentions me" matches on. */
 export function adfToText(node: any): string {
@@ -40,13 +41,15 @@ export interface JiraDeps {
   token: string;
   fetchImpl?: typeof fetch;
   lookbackDays?: number;
+  /** Custom JQL; empty uses the default query */
+  jql?: string;
 }
 
-export function createJiraAdapter(deps: JiraDeps | null): SourceAdapter {
+export function createJiraAdapter(deps: Maybe<JiraDeps>): SourceAdapter {
   return {
     source: "jira",
-    configured: () => deps !== null,
-    fetch: (since) => fetchJira(deps!, since),
+    configured: () => current(deps) !== null,
+    fetch: (since) => fetchJira(current(deps)!, since),
   };
 }
 
@@ -65,7 +68,7 @@ async function fetchJira(d: JiraDeps, since: number | null): Promise<NormalizedE
   const me = await call("/myself");
   const myId: string = me.accountId;
   const days = d.lookbackDays ?? 14;
-  const jql = `(assignee = currentUser() OR watcher = currentUser() OR reporter = currentUser() OR comment ~ currentUser()) AND updated >= -${days}d ORDER BY updated DESC`;
+  const jql = d.jql?.trim() || `(assignee = currentUser() OR watcher = currentUser() OR reporter = currentUser() OR comment ~ currentUser()) AND updated >= -${days}d ORDER BY updated DESC`;
   const search = await call("/search/jql", {
     method: "POST",
     body: JSON.stringify({ jql, fields: ["summary", "status", "assignee", "updated", "reporter"], maxResults: 50 }),

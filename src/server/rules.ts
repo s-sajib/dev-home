@@ -1,3 +1,4 @@
+import { runtime } from "./runtime";
 import type { Flag, NormalizedEvent } from "./types";
 
 export interface RuleContext {
@@ -64,5 +65,5 @@ export function computeFlags(events: NormalizedEvent[], ctx: RuleContext): Flag[
     flags.add("overdue_reminder");
   }
 
-  return [...flags];
+  return [...flags].filter((f) => !runtime.disabledFlags.includes(f));
 }
