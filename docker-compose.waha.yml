@@ -1,0 +1,19 @@
+# WAHA (WhatsApp HTTP API) as a read-only linked device. Pin WAHA_IMAGE to a specific version tag once the spike passes.
+# Env names follow WAHA's docs as I remember them: verify with scripts/spike-waha.ts (see SPIKE.md).
+services:
+  waha:
+    image: ${WAHA_IMAGE:-devlikeapro/waha}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WHATSAPP_API_KEY: ${WAHA_API_KEY:?set WAHA_API_KEY in .env}
+      WHATSAPP_START_SESSION: default
+      # Events flow in to Work Inbox on the host. Only message events + session status are subscribed.
+      WHATSAPP_HOOK_URL: http://host.docker.internal:3571/webhook/waha?token=${WAHA_WEBHOOK_TOKEN:?set WAHA_WEBHOOK_TOKEN in .env}
+      WHATSAPP_HOOK_EVENTS: message.any,session.status
+    volumes:
+      - waha-sessions:/app/.sessions
+volumes:
+  waha-sessions:

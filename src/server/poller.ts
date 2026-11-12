@@ -13,7 +13,8 @@ export async function pollOnce(db: DB, adapters: SourceAdapter[], cfg: Pick<Conf
     try {
       const events = await a.fetch(prev?.last_poll_at ?? null);
       upsertEvents(db, events);
-      setStatus(db, { source: a.source, ok: true, lastPollAt: now, error: null, banner: null });
+      const h = a.health ? await a.health() : { ok: true, banner: null };
+      setStatus(db, { source: a.source, ok: h.ok, lastPollAt: now, error: null, banner: h.banner });
     } catch (err: any) {
       setStatus(db, { source: a.source, ok: false, lastPollAt: prev?.last_poll_at ?? null, error: String(err?.message ?? err), banner: null });
     }
