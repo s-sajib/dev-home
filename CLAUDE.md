@@ -9,6 +9,7 @@ Rules that must not be broken: code fetches and flags, Claude (via `claude -p`) 
 - `src/web/*` React UI. `demo.ts` made-up data (`bun run demo`).
 - Tests: `bun run test` (Vitest on Bun, fixtures only, no network), `bun run test:e2e` (Playwright vs the demo server, reset via `POST /api/demo/reset`), typecheck `bunx tsc --noEmit`.
 - Design: tokens in `src/web/styles.css` are the 'dusk' skin of sajib.website (same hex values, Schibsted Grotesk + Geist Mono self-hosted in `src/web/fonts`). Change colours there only.
+- UI follows OOUX: five objects (Ticket, Pull request, Conversation, Reminder, Note) each with ONE glyph, ONE why-line, ONE verb row, rendered by the same components everywhere (`src/web/objects.tsx`: ObjectRow, Verbs, Glyph, related). Relationships are clickable. Less is more: no chip stacks, urgency is a lamp dot, key hints show on hover, Claude controls live in one menu.
 - Board: `src/server/board.ts`; columns/status map are Settings. A manual move pins a card; moves are local and never write to Jira.
 
 ## What was built without a Mac or real accounts (UNVERIFIED against the real world)

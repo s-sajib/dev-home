@@ -41,12 +41,12 @@ test("rebinding a key works and duplicates are refused", async ({ page }) => {
   await page.keyboard.press("e");
   await expect(page.locator(".ferr")).toContainText("used by both");
   await page.getByRole("button", { name: "Back to inbox" }).click();
-  const before = await page.locator(".row").count();
+  const before = await page.locator("[data-testid=list] .row").count();
   await page.keyboard.press("d");
   await page.waitForTimeout(300);
-  expect(await page.locator(".row").count()).toBe(before); // old key does nothing
+  expect(await page.locator("[data-testid=list] .row").count()).toBe(before); // old key does nothing
   await page.keyboard.press("e");
-  await expect(page.locator(".row")).toHaveCount(before - 1);
+  await expect(page.locator("[data-testid=list] .row")).toHaveCount(before - 1);
 });
 
 test("theme setting switches the whole app", async ({ page }) => {

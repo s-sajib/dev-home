@@ -23,12 +23,12 @@ test("j/k move the selection and the detail follows", async ({ page }) => {
 
 test("dismiss hides an item and undo brings it back", async ({ page }) => {
   await page.click('.row:has-text("OPS-88")');
-  const before = await page.locator(".row").count();
+  const before = await page.locator("[data-testid=list] .row").count();
   await page.keyboard.press("d");
-  await expect(page.locator(".row")).toHaveCount(before - 1);
+  await expect(page.locator("[data-testid=list] .row")).toHaveCount(before - 1);
   await expect(page.locator(".toast")).toContainText("Dismissed");
   await page.keyboard.press("u");
-  await expect(page.locator(".row")).toHaveCount(before);
+  await expect(page.locator("[data-testid=list] .row")).toHaveCount(before);
 });
 
 test("Jira transition asks for an explicit confirmation before anything is written", async ({ page, request }) => {

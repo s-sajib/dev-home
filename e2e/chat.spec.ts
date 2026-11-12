@@ -28,34 +28,45 @@ test("the draft is a dashed 'not sent' bubble and the chat is visibly read-only"
   expect(await page.locator(".composer input, .composer textarea").count()).toBe(0); // no way to type or send
 });
 
-test("auto chat shows a collapsible summary; presets and custom size work", async ({ page }) => {
+const summariseBtn = (page: import("@playwright/test").Page) => page.locator(".split-btn > button").first();
+const openOptions = (page: import("@playwright/test").Page) => page.getByRole("button", { name: "Summarise options" }).click();
+
+test("auto chat shows a collapsible summary; presets and custom size live in one menu", async ({ page }) => {
   const summary = page.getByTestId("summary");
   await expect(summary).toContainText("Acme's Priya");
   await expect(summary.locator("li")).toHaveCount(0);
   await summary.getByRole("button", { name: /action item/ }).click();
   await expect(summary.locator("li")).toHaveCount(2);
-  await page.getByRole("button", { name: "100", exact: true }).click();
-  await expect(page.getByRole("button", { name: "make 100 the default" })).toBeVisible();
-  await page.getByRole("button", { name: "make 100 the default" }).click();
-  await expect(page.locator(".seg button:has-text('100') i")).toBeVisible(); // star moves to the new default
-  await page.getByPlaceholder("custom").fill("37");
-  await expect(page.getByRole("button", { name: "make 37 the default" })).toBeVisible();
+  await openOptions(page);
+  const panel = page.getByRole("dialog", { name: "Summarise options" });
+  await panel.getByRole("button", { name: "100", exact: true }).click();
+  await expect(summariseBtn(page)).toContainText("Summarise 100");
+  await panel.getByRole("button", { name: "make 100 the default" }).click();
+  await expect(panel.locator(".seg button:has-text('100') i")).toBeVisible();
+  await panel.getByPlaceholder("custom").fill("37");
+  await expect(summariseBtn(page)).toContainText("Summarise 37");
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
 });
 
 test("per-chat Claude mode: Never disables summarising; w cycles the mode", async ({ page }) => {
-  await page.getByRole("button", { name: "Never", exact: true }).click();
+  await openOptions(page);
+  const panel = page.getByRole("dialog", { name: "Summarise options" });
+  await panel.getByRole("button", { name: "Never", exact: true }).click();
   await expect(page.locator(".toast")).toContainText("will not be sent to Claude");
-  await expect(page.getByRole("button", { name: /^Summarise/ })).toBeDisabled();
-  await page.getByRole("button", { name: "Manual", exact: true }).click();
-  await expect(page.getByRole("button", { name: /^Summarise/ })).toBeEnabled();
+  await expect(summariseBtn(page)).toBeDisabled();
+  await expect(page.locator(".modeflag.never")).toBeVisible();
+  await panel.getByRole("button", { name: "Manual", exact: true }).click();
+  await expect(summariseBtn(page)).toBeEnabled();
+  await page.keyboard.press("Escape");
   await page.keyboard.press("w"); // manual -> auto
-  await expect(page.locator(".seg button.on.auto")).toBeVisible();
+  await expect(page.locator(".modeflag.auto")).toBeVisible();
 });
 
 test("a manual chat can be summarised on demand and gets a copy-only draft", async ({ page }) => {
   await page.click('.row:has-text("Lena Park")');
   await expect(page.getByTestId("summary")).toHaveCount(0);
-  await page.getByRole("button", { name: /^Summarise/ }).click();
+  await summariseBtn(page).click();
   await expect(page.getByTestId("summary")).toContainText("Lena is blocked");
   await expect(page.getByTestId("draft")).toContainText("review the PR");
 });
