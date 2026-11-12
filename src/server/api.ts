@@ -174,6 +174,7 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
           summaryPresets: cfg.summaryPresets,
           summaryDefault: summaryDefault(db, cfg),
           keys: cfg.keys,
+          theme: cfg.theme,
         },
         demo: cfg.demo,
       });

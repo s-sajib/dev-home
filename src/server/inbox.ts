@@ -72,6 +72,8 @@ export function visibleEvents(events: NormalizedEvent[]): NormalizedEvent[] {
   return events.filter((e) => e.authorIsMe || !ignore.has(e.author.toLowerCase()));
 }
 
+const it_isChat = (k: string) => k.startsWith("chat:");
+
 export function listItems(db: DB, now: number): InboxItem[] {
   const rows = db
     .query(
@@ -107,7 +109,7 @@ export function listItems(db: DB, now: number): InboxItem[] {
           source: e.source, kind: e.kind, author: e.author, authorIsMe: e.authorIsMe,
           body: e.body, url: e.url, ts: e.ts, mentionsMe: e.mentionsMe,
         }))
-        .slice(-12),
+        .slice(it_isChat(r.item_key) ? -120 : -12),
     };
   });
 

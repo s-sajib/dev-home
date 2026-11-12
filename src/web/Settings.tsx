@@ -3,6 +3,7 @@ import { ACTIONS, type ActionId, type Keymap } from "../shared/keys";
 
 type Source = "default" | "env" | "saved";
 interface Field {
+  presets?: Record<string, unknown>;
   key: string; group: string; label: string; help?: string; type: string; options?: string[]; placeholder?: string; restart?: boolean;
   value: any; default: any; secretSet?: boolean; source: Source;
 }
@@ -15,6 +16,7 @@ const TESTS: Record<string, { target: string; label: string }> = {
   WhatsApp: { target: "whatsapp", label: "Test WAHA" },
   Claude: { target: "claude", label: "Test claude" },
   Reminders: { target: "reminders", label: "Test Reminders" },
+  "Claude Code": { target: "", label: "" },
 };
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const FLAG_NAMES: Record<string, string> = {
@@ -60,13 +62,12 @@ export function Settings({ onClose, onChanged }: { onClose: () => void; onChange
 
   if (!data) return <div className="loading">Loading settings…</div>;
   const fields = data.fields.filter((f) => f.group === group);
-  const t = TESTS[group];
+  const t = TESTS[group]?.target ? TESTS[group] : undefined;
 
   return (
     <div className="settings">
       <nav className="snav">
-        <h3>Settings</h3>
-        {data.groups.map((g) => (
+                {data.groups.map((g) => (
           <button key={g} className={g === group ? "on" : ""} onClick={() => setGroup(g)}>{g}</button>
         ))}
         <button className="close" onClick={onClose}>Back to inbox <kbd>Esc</kbd></button>
@@ -113,7 +114,7 @@ function Editor({ f, onSave, onClear }: { f: Field; onSave: (v: unknown) => Prom
       return <select value={f.value} onChange={(e) => onSave(e.target.value)}>{f.options!.map((o) => <option key={o}>{o}</option>)}</select>;
     case "days":
       return (
-        <div className="chips">
+        <div className="dchips">
           {DAY_NAMES.map((d, i) => {
             const on = (f.value as number[]).includes(i);
             return <button key={d} className={on ? "on" : ""} onClick={() => onSave(on ? (f.value as number[]).filter((x) => x !== i) : [...f.value, i])}>{d}</button>;
@@ -130,7 +131,16 @@ function Editor({ f, onSave, onClear }: { f: Field; onSave: (v: unknown) => Prom
         </div>
       );
     case "list":
-      return <textarea rows={Math.min(6, Math.max(2, (f.value?.length ?? 0) + 1))} value={draft} placeholder="one per line" onChange={(e) => setDraft(e.target.value)} onBlur={commit} />;
+      return (
+        <>
+          {f.presets && (
+            <div className="presets">
+              {Object.entries(f.presets).map(([label, v]) => <button key={label} className="pill" onClick={() => onSave(v)}>{label}</button>)}
+            </div>
+          )}
+          <textarea rows={Math.min(6, Math.max(2, (f.value?.length ?? 0) + 1))} value={draft} placeholder="one per line" onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
+        </>
+      );
     case "secret":
       return <SecretEditor f={f} onSave={onSave} onClear={onClear} />;
     case "keys":

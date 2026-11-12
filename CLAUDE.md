@@ -7,7 +7,9 @@ Rules that must not be broken: code fetches and flags, Claude (via `claude -p`) 
 - `src/server/adapters/*` one adapter per source; external-format parsing stays inside the file.
 - `rules.ts` flags, `linker.ts` ticket keys, `inbox.ts` items/state, `claude.ts` verdicts+drafts, `nag.ts` reminder nag, `api.ts` HTTP.
 - `src/web/*` React UI. `demo.ts` made-up data (`bun run demo`).
-- Tests: `bun test` (fixtures only, no network). Typecheck: `bunx tsc --noEmit`.
+- Tests: `bun run test` (Vitest on Bun, fixtures only, no network), `bun run test:e2e` (Playwright vs the demo server, reset via `POST /api/demo/reset`), typecheck `bunx tsc --noEmit`.
+- Design: tokens in `src/web/styles.css` are the 'dusk' skin of sajib.website (same hex values, Schibsted Grotesk + Geist Mono self-hosted in `src/web/fonts`). Change colours there only.
+- Board: `src/server/board.ts`; columns/status map are Settings. A manual move pins a card; moves are local and never write to Jira.
 
 ## What was built without a Mac or real accounts (UNVERIFIED against the real world)
 Built and unit-tested in a Linux cloud container with fixtures. Please verify, in this order, and fix what differs from reality:

@@ -1,6 +1,8 @@
 # Work Inbox
 
-A personal, local-first inbox that merges Jira, GitHub, WhatsApp Business and Apple Reminders into one keyboard-driven list of things that need me. Code fetches and flags; Claude (via `claude -p`) only judges and drafts; every outbound action is a keypress I trigger. macOS only, single user.
+A personal, local-first inbox and work board that merges Jira, GitHub, WhatsApp Business and Apple Reminders into one keyboard-driven list of things that need me. Code fetches and flags; Claude (via `claude -p`) only judges and drafts; every outbound action is a keypress I trigger. macOS only, single user.
+
+Views: **Inbox** (WhatsApp chats read like conversations), **Board** (configurable pipeline, drag and drop), **Settings**. Claude Code can drive it through MCP: see `docs/PROTOCOL.md`.
 
 Stack: Bun, `bun:sqlite`, React. WhatsApp via WAHA (read-only). Reminders via `osascript`.
 
@@ -9,7 +11,9 @@ Stack: Bun, `bun:sqlite`, React. WhatsApp via WAHA (read-only). Reminders via `o
 ```bash
 bun install
 bun run demo      # made-up data, http://127.0.0.1:3571
-bun test
+bun run test       # Vitest (runs on Bun)
+bun run test:e2e   # Playwright (boots the demo server on :3599)
+bun run test:all   # typecheck + unit + e2e
 ```
 
 Real data: `bun run dev`, open the app, press `,` for **Settings** and fill in Jira, GitHub, WhatsApp and the rest (tokens go to the macOS Keychain). `.env` still works and is optional; saved settings win over it. Everything applies live, no restart (except port/host). Run at login: `scripts/install-launchd.sh`.

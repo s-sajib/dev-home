@@ -34,6 +34,8 @@ export function demoEvents(now: number): NormalizedEvent[] {
       url: "https://github.com/acme/payments/pull/482#issuecomment-9", ts: now - 4 * H },
 
     // WhatsApp group mention, owed reply
+    { ...base, source: "whatsapp", sourceId: "m0", kind: "chat", nativeKey: "chat:120363@g.us", ticketKey: null, title: "Acme Support Group",
+      author: "Me", authorIsMe: true, body: "Looking into the webhook failures now, will update the group shortly.", ts: now - 8 * H },
     { ...base, source: "whatsapp", sourceId: "m1", kind: "chat", nativeKey: "chat:120363@g.us", ticketKey: null, title: "Acme Support Group",
       author: "Priya (Acme)", body: "Morning! Any update on the failed webhooks (PAY-231)?", ts: now - 7 * H },
     { ...base, source: "whatsapp", sourceId: "m2", kind: "chat", nativeKey: "chat:120363@g.us", ticketKey: null, title: "Acme Support Group",

@@ -73,3 +73,27 @@ export function buildGroups<T extends InboxItem>(items: T[], mode: "verdict" | "
   }
   return out;
 }
+
+export type Tone = "warn" | "accent" | "rose" | "sky" | "good" | "bad" | "";
+const TONE: Partial<Record<Flag, Tone>> = {
+  overdue_reminder: "warn", needs_reply: "warn", mentions_me: "accent", review_requested: "rose",
+  unanswered_comment: "warn", status_changed_by_other: "sky", assigned: "", stale: "",
+};
+export const flagTone = (f: Flag): Tone => TONE[f] ?? "";
+export const verdictTone = (v: "needs_me" | "drop" | "delegate"): Tone => (v === "needs_me" ? "good" : v === "delegate" ? "sky" : "");
+
+/** Stable per-person colour inside a conversation (palette tokens --p1..--p6). */
+export function personColor(name: string): string {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return `var(--p${(h % 6) + 1})`;
+}
+export const initials = (name: string) => name.replace(/\(.*?\)/g, "").trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
+export const timeLabel = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+export function dayLabel(ts: number, now: number): string {
+  const d = new Date(ts), n = new Date(now);
+  const same = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  if (same(d, n)) return "Today";
+  if (same(d, new Date(now - 86_400_000))) return "Yesterday";
+  return d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+}
