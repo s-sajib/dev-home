@@ -12,6 +12,7 @@ import { autoHandleChats, clampN, getMode, latestSummary, LLM_MODES, modesByItem
 import { testConnection, type Exec, type Target } from "./connect-test";
 import type { ConfigManager } from "./settings";
 import { addCard, getBoard, moveCard, removeCard, syncBoard, updateCard } from "./board";
+import { demoRunner as demoAI, seedDemo } from "./demo";
 import { getStatuses, pollOnce } from "./poller";
 import { logAction } from "./store";
 import type { SourceAdapter } from "./types";
@@ -81,6 +82,19 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
     if (blocked) return blocked;
     const path = url.pathname.slice(4);
     const method = req.method;
+
+    // demo mode only: put the made-up data back exactly as it started (used by the end-to-end tests)
+    if (method === "POST" && path === "/demo/reset" && cfg.demo) {
+      db.transaction(() => {
+        for (const t of ["events", "items", "state", "drafts", "reminder_links", "actions_log", "source_status", "chats", "chat_settings", "summaries", "settings", "board_cards"]) db.exec(`DELETE FROM ${t}`);
+      })();
+      settings.reload();
+      seedDemo(db);
+      refresh();
+      await judgeItems(db, cfg, demoAI);
+      await autoHandleChats({ db, cfg, run: demoAI });
+      return json({ ok: true });
+    }
 
     // ---- read endpoints used by Claude Code (MCP) and handy for scripts ----
     if (method === "GET" && path === "/chat-messages") {

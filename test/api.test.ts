@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { createApi } from "../src/server/api";
 import { loadConfig } from "../src/server/config";
 import { openDb } from "../src/server/db";

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { draftReply, itemsNeedingVerdict, judgeItems, latestDraft, parseClaudeOutput, redact, type Runner } from "../src/server/claude";
 import { setMode } from "../src/server/chatllm";
 import { loadConfig } from "../src/server/config";

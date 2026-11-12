@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { adfMentionIds, adfToText, createJiraAdapter, jiraTransition, parseComment, parseIssue } from "../src/server/adapters/jira";
 import { createGithubAdapter, isBot } from "../src/server/adapters/github";
 import { pollOnce, getStatuses } from "../src/server/poller";

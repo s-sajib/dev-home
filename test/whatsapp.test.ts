@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { loadConfig } from "../src/server/config";
 import { openDb } from "../src/server/db";
 import { createWhatsappAdapter, handleWahaWebhook, jidLocal, parseWahaMessage, purgeOldChats, statusBanner } from "../src/server/adapters/whatsapp";

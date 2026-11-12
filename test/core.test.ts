@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { openDb } from "../src/server/db";
 import { demoEvents } from "../src/server/demo";
 import { dismissItem, listItems, rebuildItems, snoozeItem } from "../src/server/inbox";

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "vitest";
 import { createApi } from "../src/server/api";
 import { createGithubAdapter, isBot } from "../src/server/adapters/github";
 import { createJiraAdapter } from "../src/server/adapters/jira";

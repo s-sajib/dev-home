@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { createApi, guardRequest } from "../src/server/api";
 import { addCard, autoColumn, getBoard, moveCard, parseStatusMap, PIPELINE_A, PIPELINE_B, removeCard, syncBoard, updateCard } from "../src/server/board";
 import { loadConfig } from "../src/server/config";

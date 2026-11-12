@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { createApi } from "../src/server/api";
 import { autoHandleChats, chatMessages, clampN, getMode, latestSummary, setMode, summarizeChat, summaryDefault } from "../src/server/chatllm";
 import { latestDraft, type Runner } from "../src/server/claude";

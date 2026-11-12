@@ -300,6 +300,11 @@ export class ConfigManager {
     configureRuntime({ ignoreAuthors: this.cfg.ignoreAuthors, disabledFlags: this.cfg.disabledFlags, chatDefaultMode: this.cfg.chatDefaultMode });
   }
 
+  /** Re-read saved settings (e.g. after the demo database was reset). */
+  reload() {
+    this.apply();
+  }
+
   /** Save one setting (value) or reset it to the default (null). Secrets go to the Keychain. */
   async set(key: string, value: unknown): Promise<void> {
     const f = BY_KEY.get(key);

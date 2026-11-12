@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { loadConfig } from "../src/server/config";
 import { openDb } from "../src/server/db";
 import { completeReminder, createReminder, createRemindersAdapter, parseReminders } from "../src/server/adapters/reminders";
