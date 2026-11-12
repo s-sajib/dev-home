@@ -29,7 +29,7 @@ const OVERLAY = `(() => {
     #__keys{position:fixed;left:236px;bottom:18px;z-index:2147483646;display:flex;gap:6px;pointer-events:none}
     .__key{font:600 14px ui-monospace,Menlo,monospace;color:#1b1a18;background:#f4f1ea;border-radius:8px;padding:5px 10px;box-shadow:0 2px 0 #b9b2a6,0 6px 16px #0006;animation:__k 1.1s ease-out forwards}
     @keyframes __k{0%{transform:translateY(6px);opacity:0}12%{transform:none;opacity:1}80%{opacity:1}100%{opacity:0}}
-    #__cap{position:fixed;left:50%;top:62px;transform:translateX(-50%);z-index:2147483645;pointer-events:none;display:flex;gap:12px;align-items:baseline;max-width:880px;padding:9px 18px;border-radius:14px;background:#12110fe6;color:#eee8de;font:500 15px "Schibsted Grotesk",system-ui,sans-serif;box-shadow:0 10px 40px #000a,inset 0 0 0 .5px #ffeed82e;backdrop-filter:blur(14px);opacity:0;transition:opacity .35s}
+    #__cap{position:fixed;left:50%;top:9px;transform:translateX(-50%);z-index:2147483645;pointer-events:none;display:flex;gap:12px;align-items:baseline;max-width:1000px;padding:8px 18px;border-radius:12px;background:#12110fe6;color:#eee8de;font:500 15px "Schibsted Grotesk",system-ui,sans-serif;box-shadow:0 10px 40px #000a,inset 0 0 0 .5px #ffeed82e;backdrop-filter:blur(14px);opacity:0;transition:opacity .35s}
     #__cap.on{opacity:1} #__cap b{font:500 12px ui-monospace,Menlo,monospace;color:#f2a85c;letter-spacing:.04em} #__cap span{color:#b9b2a6;font-size:13px}
     #__title{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:#12110f;color:#eee8de;text-align:center;font-family:"Schibsted Grotesk",system-ui,sans-serif;transition:opacity .8s}
     #__title h1{font-size:54px;letter-spacing:-.03em;margin:0 0 10px;font-weight:650} #__title p{font:400 16px ui-monospace,Menlo,monospace;color:#918a7e;margin:0}
@@ -99,9 +99,10 @@ async function main() {
   for (let i = 0; i < 60; i++) { try { if ((await fetch(`${BASE}/api/inbox`)).ok) break; } catch { /* not up yet */ } await new Promise((r) => setTimeout(r, 250)); }
 
   const browser = await chromium.launch();
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark", recordVideo: { dir: join(OUT, "video-tmp"), size: { width: 1440, height: 900 } }, permissions: ["clipboard-read", "clipboard-write"] });
+  const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, colorScheme: "dark", recordVideo: { dir: join(OUT, "video-tmp"), size: { width: 1600, height: 1000 } }, permissions: ["clipboard-read", "clipboard-write"] });
   await ctx.addInitScript(OVERLAY);
   page = await ctx.newPage();
+  const videoStart = Date.now();
   await page.goto(BASE);
   await page.waitForSelector(".row");
   await page.evaluate(() => (window as any).__title("A day with Work Inbox", "mock data · Claude Code for coding, this app for comms"));
@@ -126,7 +127,9 @@ async function main() {
   await key("y", 900);
   await cap("09:10", "Draft copied. I paste it into WhatsApp on my phone", "read-only by design: the app has no send button");
   await sleep(2600);
-  await key("a", 800);
+  await key("a", 900);
+  await cap("09:11", "Accept: I've seen it, it's on me", "the row gets a check until something new happens on it");
+  await sleep(2400);
 
   // 09:20 ─ Lena DM, manual Claude
   await tap(row("Lena Park")); await sleep(1200);
@@ -180,7 +183,7 @@ async function main() {
   await cap("11:00", "Heads down. Claude Code takes over the coding side", "it reads and updates my board through the app's protocol (MCP)");
   const mcpConfig = join(tmpdir(), "workday-mcp.json");
   writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { "work-inbox": { command: "bun", args: ["src/mcp/server.ts"], env: { WORK_INBOX_URL: BASE } } } }));
-  const prompt = "You are my coding agent. Use ONLY the work-inbox tools. 1) board_get, find the Jira card in 'In Progress' and move it to 'PR Review' (I just opened the PR). 2) Read the last 10 messages of the chat 'chat:120363@g.us' with chat_messages, then draft a short friendly reply with draft_save telling the client the retry fix is merged and deploying to stage, so it will be live before their 3pm demo. 3) Add a board card 'Verify retries on stage' in 'Deployed Stage' with a one-line note. Finish with one short sentence.";
+  const prompt = "You are my coding agent. Use ONLY the work-inbox tools. 1) I just opened the pull request for WEB-402 (cookie banner copy): use board_get to find its card and move it to 'PR Review'. 2) PAY-231 (webhook retries) is merged. Read the last 10 messages of chat 'chat:120363@g.us' with chat_messages, then use draft_save to leave a short friendly reply telling the client the retry fix is merged and deploying to stage, so it will be live before their 3pm demo. 3) Add a board card 'Verify retries on stage' in 'Deployed Stage' with a one-line note. Finish with one short sentence.";
   const shown = (l: string, cls = "") => `<span class="${cls}">${l.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</span>`;
   let lines: string[] = [shown("$ ", "p") + shown("claude -p \"You are my coding agent. Use ONLY the work-inbox tools…\"", "d")];
   const render = () => page.evaluate((h) => (window as any).__term(h, true), lines.join("\n")).catch(() => undefined);
@@ -201,10 +204,14 @@ async function main() {
       }
     }
   })();
+  await cap("11:01", "Time-lapse ×6 while it works", "I keep coding; the board updates live (5 second refresh)");
+  const waitStart = (Date.now() - videoStart) / 1000;
   const t0 = Date.now();
-  while (claude.exitCode === null && Date.now() - t0 < 170_000) { await sleep(1000); if ((Date.now() - t0) / 1000 === 20) await cap("11:01", "I keep working while it runs", "the board updates live (5s refresh)"); }
+  while (claude.exitCode === null && Date.now() - t0 < 170_000) await new Promise((r) => setTimeout(r, 500));
   if (claude.exitCode === null) claude.kill();
-  await reader.catch(() => undefined); await sleep(6500); // let the 5s refresh catch up
+  await reader.catch(() => undefined);
+  const waitEnd = (Date.now() - videoStart) / 1000;
+  await sleep(6500); // let the 5s refresh catch up
   await cap("11:03", "Claude Code moved my card and added a verification card", "all from the terminal, on the same board I see");
   await sleep(3500);
   await page.evaluate(() => (window as any).__term("", false));
@@ -233,7 +240,10 @@ async function main() {
   renameSync(path, webm);
   server.kill();
   if (Bun.which("ffmpeg")) {
-    const r = Bun.spawnSync(["ffmpeg", "-y", "-loglevel", "error", "-i", webm, "-c:v", "libx264", "-crf", "24", "-preset", "medium", "-pix_fmt", "yuv420p", "-movflags", "+faststart", join(OUT, "workday.mp4")]);
+    // time-lapse the wait for Claude Code, keep everything else real time
+    const a = waitStart.toFixed(2), b = Math.max(waitEnd, waitStart + 1).toFixed(2);
+    const filter = `[0:v]trim=0:${a},setpts=PTS-STARTPTS[v0];[0:v]trim=${a}:${b},setpts=(PTS-STARTPTS)/6[v1];[0:v]trim=${b},setpts=PTS-STARTPTS[v2];[v0][v1][v2]concat=n=3:v=1:a=0[out]`;
+    const r = Bun.spawnSync(["ffmpeg", "-y", "-loglevel", "error", "-i", webm, "-filter_complex", filter, "-map", "[out]", "-c:v", "libx264", "-crf", "23", "-preset", "medium", "-pix_fmt", "yuv420p", "-movflags", "+faststart", join(OUT, "workday.mp4")]);
     console.log(r.exitCode === 0 ? "wrote shots/workday.mp4" : "ffmpeg failed");
   }
   console.log("wrote", webm, readdirSync(OUT).filter((f) => f.startsWith("workday")));
