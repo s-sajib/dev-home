@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InboxItem, SourceStatus } from "../server/types";
+import { ACTIONS, type ActionId, type Keymap } from "../shared/keys";
 import { FLAG_LABEL, SOURCE_LABEL, VERDICT_LABEL, ago, buildGroups, sortFlags } from "./format";
+import { Settings } from "./Settings";
 
 type LlmMode = "manual" | "auto" | "never";
 interface SummaryDto { n: number; summary: string; actionItems: string[]; replyNeeded: boolean; sensitive: boolean; createdAt: number }
@@ -13,7 +15,7 @@ interface InboxResponse {
   statuses: SourceStatus[];
   configured: { jira: boolean; github: boolean; reminders: boolean; whatsapp: boolean };
   transitions: string[];
-  settings: { summaryN: number };
+  ui: { refreshSeconds: number; grouping: "auto" | "verdict" | "lane"; snoozeHours: number; remindHours: number; summaryPresets: number[]; summaryDefault: number; keys: Keymap };
   demo: boolean;
 }
 
@@ -24,19 +26,22 @@ export function App() {
   const [selKey, setSelKey] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; undo?: () => void; error?: boolean } | null>(null);
   const [modal, setModal] = useState<Modal>(null);
-  const [grouping, setGrouping] = useState<"auto" | "verdict" | "lane">("auto");
+  const [grouping, setGrouping] = useState<"auto" | "verdict" | "lane" | null>(null); // null = follow the setting
+  const [view, setView] = useState<"inbox" | "settings">("inbox");
   const [busy, setBusy] = useState<string | null>(null);
   const [sumN, setSumN] = useState<number | null>(null); // chosen message count for the next summary (null = default)
   const toastTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => setData(await (await fetch("/api/inbox")).json()), []);
+  const refreshMs = (data?.ui.refreshSeconds ?? 30) * 1000;
   useEffect(() => {
     load();
-    const t = setInterval(load, 30_000);
+    const t = setInterval(load, refreshMs);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, refreshMs]);
 
-  const mode = grouping === "auto" ? (data?.items.some((i) => i.verdict) ? "verdict" : "lane") : grouping;
+  const wanted = grouping ?? data?.ui.grouping ?? "auto";
+  const mode = wanted === "auto" ? (data?.items.some((i) => i.verdict) ? "verdict" : "lane") : wanted;
   const groups = useMemo(() => (data ? buildGroups(data.items, mode) : []), [data, mode]);
   const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
 
@@ -78,7 +83,7 @@ export function App() {
     return r;
   };
 
-  const defaultN = data?.settings.summaryN ?? 20;
+  const defaultN = data?.ui.summaryDefault ?? 20;
   const summarize = async (n = sumN ?? defaultN) => {
     if (!current?.itemKey.startsWith("chat:")) return say("Summaries are for WhatsApp chats.", { error: true });
     say(`Summarising the last ${n} messages…`);
@@ -86,7 +91,7 @@ export function App() {
     if (r?.summary) say(`Summary ready (last ${r.summary.n} messages).`);
   };
   const setDefaultN = async (n: number) => {
-    await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ summaryN: n }) });
+    await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ changes: { summaryDefault: n } }) });
     say(`Default is now ${n} messages.`);
     await load();
   };
@@ -103,6 +108,7 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (view === "settings") return; // the Settings screen handles its own keys
       if (e.metaKey && e.key === "Enter" && modal?.kind === "comment" && modal.text.trim() && current) {
         e.preventDefault();
         act("comment", { text: modal.text, confirm: true }, "Comment posted to Jira.").then(() => setModal(null));
@@ -123,26 +129,30 @@ export function App() {
       }
       if (modal) { if (e.key === "Escape" || e.key === "?") setModal(null); return; }
 
-      switch (e.key) {
-        case "j": case "ArrowDown": e.preventDefault(); move(1); break;
-        case "k": case "ArrowUp": e.preventDefault(); move(-1); break;
-        case "d": act("dismiss", {}, "Dismissed. New activity brings it back.", true); break;
-        case "s": act("snooze", { hours: 4 }, "Snoozed for 4 hours.", true); break;
-        case "a": act("accept", {}, "Accepted."); break;
-        case "o": case "Enter": if (current?.url) window.open(current.url, "_blank", "noopener"); break;
-        case "u": if (toast?.undo) { toast.undo(); setToast(null); } break;
-        case "g": fetch("/api/poll", { method: "POST" }).then(load); say("Refreshing…"); break;
-        case "i": say("Judging…"); fetch("/api/judge", { method: "POST" }).then((r) => r.json()).then((r) => { say(r.ok ? `Judged ${r.judged} item(s).` : r.error, { error: !r.ok }); load(); }); break;
-        case "v": setGrouping(mode === "verdict" ? "lane" : "verdict"); break;
-        case "r": act("remind", { hours: 2 }, "Reminder created in Work Inbox (due in 2h)."); break;
-        case "x": act("complete", {}, "Reminder completed."); break;
-        case "z": summarize(); break;
-        case "w": if (current?.llmMode) setMode(({ manual: "auto", auto: "never", never: "manual" } as const)[current.llmMode]); break;
-        case "c": if (current) { say("Drafting…"); act("draft", {}).then((r) => r?.draft && say("Draft ready. Press y to copy.")); } break;
-        case "y": if (current?.draft) copy(current.draft); break;
-        case "t": if (current?.ticketKey) setModal({ kind: "transition", picked: null }); else say("No linked Jira ticket.", { error: true }); break;
-        case "m": if (current?.ticketKey) { e.preventDefault(); setModal({ kind: "comment", text: "" }); } else say("No linked Jira ticket.", { error: true }); break;
-        case "?": setModal({ kind: "help" }); break;
+      const keys = data?.ui.keys;
+      if (!keys) return;
+      const action = (Object.keys(keys) as ActionId[]).find((a) => keys[a] === e.key);
+      switch (e.key === "ArrowDown" ? "down" : e.key === "ArrowUp" ? "up" : e.key === "Enter" ? "open" : action) {
+        case "down": e.preventDefault(); move(1); break;
+        case "up": e.preventDefault(); move(-1); break;
+        case "dismiss": act("dismiss", {}, "Dismissed. New activity brings it back.", true); break;
+        case "snooze": act("snooze", {}, `Snoozed for ${data!.ui.snoozeHours} hour(s).`, true); break;
+        case "accept": act("accept", {}, "Accepted."); break;
+        case "open": if (current?.url) window.open(current.url, "_blank", "noopener"); break;
+        case "undo": if (toast?.undo) { toast.undo(); setToast(null); } break;
+        case "refresh": fetch("/api/poll", { method: "POST" }).then(load); say("Refreshing…"); break;
+        case "judge": say("Judging…"); fetch("/api/judge", { method: "POST" }).then((r) => r.json()).then((r) => { say(r.ok ? `Judged ${r.judged} item(s).` : r.error, { error: !r.ok }); load(); }); break;
+        case "group": setGrouping(mode === "verdict" ? "lane" : "verdict"); break;
+        case "remind": act("remind", {}, `Reminder created in Work Inbox (due in ${data!.ui.remindHours}h).`); break;
+        case "complete": act("complete", {}, "Reminder completed."); break;
+        case "summarize": summarize(); break;
+        case "mode": if (current?.llmMode) setMode(({ manual: "auto", auto: "never", never: "manual" } as const)[current.llmMode]); break;
+        case "draft": if (current) { say("Drafting…"); act("draft", {}).then((r) => r?.draft && say("Draft ready. Copy it with the copy key.")); } break;
+        case "copy": if (current?.draft) copy(current.draft); break;
+        case "transition": if (current?.ticketKey) setModal({ kind: "transition", picked: null }); else say("No linked Jira ticket.", { error: true }); break;
+        case "comment": if (current?.ticketKey) { e.preventDefault(); setModal({ kind: "comment", text: "" }); } else say("No linked Jira ticket.", { error: true }); break;
+        case "settings": setView("settings"); break;
+        case "help": setModal({ kind: "help" }); break;
       }
     };
     window.addEventListener("keydown", onKey);
@@ -170,6 +180,7 @@ export function App() {
           })}
         </div>
         <div className="count">{flat.length} need you{data.hiddenCount > 0 && <small> · {data.hiddenCount} hidden</small>}</div>
+        <button className="gear" onClick={() => setView("settings")} title="Settings">⚙ Settings</button>
       </header>
 
       {banners.map((s) => (
@@ -178,6 +189,9 @@ export function App() {
         </div>
       ))}
 
+      {view === "settings" ? (
+        <Settings onClose={() => { setView("inbox"); load(); }} onChanged={load} />
+      ) : (
       <main className="split">
         <div className="list">
           {flat.length === 0 && <div className="empty">Nothing needs you right now.</div>}
@@ -207,9 +221,10 @@ export function App() {
         </div>
 
         <aside className="detail">
-          {current ? <Detail item={current} now={data.now} onCopy={copy} busy={busy} defaultN={defaultN} n={sumN ?? defaultN} setN={setSumN} onSummarize={summarize} onDefault={setDefaultN} onMode={setMode} /> : <div className="empty">Select an item</div>}
+          {current ? <Detail item={current} now={data.now} onCopy={copy} busy={busy} defaultN={defaultN} n={sumN ?? defaultN} setN={setSumN} onSummarize={summarize} onDefault={setDefaultN} onMode={setMode} presets={data.ui.summaryPresets} keys={data.ui.keys} /> : <div className="empty">Select an item</div>}
         </aside>
       </main>
+      )}
 
       {toast && (
         <div className={`toast ${toast.error ? "err" : ""}`}>
@@ -219,22 +234,9 @@ export function App() {
       )}
 
       <footer className="keys">
-        <span><kbd>j</kbd><kbd>k</kbd> move</span>
-        <span><kbd>o</kbd> open</span>
-        <span><kbd>a</kbd> accept</span>
-        <span><kbd>d</kbd> dismiss</span>
-        <span><kbd>s</kbd> snooze</span>
-        <span><kbd>r</kbd> remind</span>
-        <span><kbd>t</kbd> transition</span>
-        <span><kbd>m</kbd> comment</span>
-        <span><kbd>z</kbd> summarise</span>
-        <span><kbd>w</kbd> auto/never</span>
-        <span><kbd>c</kbd> draft</span>
-        <span><kbd>y</kbd> copy</span>
-        <span><kbd>v</kbd> group</span>
-        <span><kbd>i</kbd> judge</span>
-        <span><kbd>g</kbd> refresh</span>
-        <span><kbd>?</kbd> help</span>
+        {(["down", "open", "accept", "dismiss", "snooze", "remind", "transition", "comment", "summarize", "mode", "draft", "copy", "group", "judge", "refresh", "settings", "help"] as ActionId[]).map((a) => (
+          <span key={a}><kbd>{data.ui.keys[a]}</kbd> {a === "down" ? "move" : ACTIONS[a].label.toLowerCase()}</span>
+        ))}
       </footer>
 
       {modal?.kind === "transition" && current && (
@@ -268,15 +270,13 @@ function Overlay({ children }: { children: React.ReactNode }) {
   return <div className="overlay"><div className="card">{children}</div></div>;
 }
 
-const PRESETS = [20, 50, 100, 200];
-
 interface DetailProps {
   item: Item; now: number; busy: string | null; defaultN: number; n: number;
   onCopy: (t: string) => void; setN: (n: number) => void; onSummarize: (n: number) => void;
-  onDefault: (n: number) => void; onMode: (m: LlmMode) => void;
+  onDefault: (n: number) => void; onMode: (m: LlmMode) => void; presets: number[]; keys: Keymap;
 }
 
-function Detail({ item, now, busy, defaultN, n, onCopy, setN, onSummarize, onDefault, onMode }: DetailProps) {
+function Detail({ item, now, busy, defaultN, n, onCopy, setN, onSummarize, onDefault, onMode, presets: PRESETS, keys }: DetailProps) {
   const isChat = item.itemKey.startsWith("chat:");
   const [custom, setCustom] = useState("");
   const isCustom = !PRESETS.includes(n);
@@ -306,7 +306,7 @@ function Detail({ item, now, busy, defaultN, n, onCopy, setN, onSummarize, onDef
                   onChange={(e) => { setCustom(e.target.value.replace(/\D/g, "")); const v = Number(e.target.value.replace(/\D/g, "")); if (v > 0) setN(Math.min(v, 500)); }}
                 />
               </div>
-              <button className="go" disabled={never || busy === "summarize"} onClick={() => onSummarize(n)}>{busy === "summarize" ? "Summarising…" : <>Summarise <kbd>z</kbd></>}</button>
+              <button className="go" disabled={never || busy === "summarize"} onClick={() => onSummarize(n)}>{busy === "summarize" ? "Summarising…" : <>Summarise <kbd>{keys.summarize}</kbd></>}</button>
               {n !== defaultN && <button className="link" onClick={() => onDefault(n)}>make {n} the default</button>}
             </div>
             <div className="aibar-row">
@@ -317,7 +317,7 @@ function Detail({ item, now, busy, defaultN, n, onCopy, setN, onSummarize, onDef
                 ))}
               </div>
               <small className="dim">
-                {item.llmMode === "auto" ? "new activity is summarised and drafted automatically; nothing is ever sent" : never ? "chat text is never sent to Claude" : "Claude only sees this chat when you press a key"} <kbd>w</kbd>
+                {item.llmMode === "auto" ? "new activity is summarised and drafted automatically; nothing is ever sent" : never ? "chat text is never sent to Claude" : "Claude only sees this chat when you press a key"} <kbd>{keys.mode}</kbd>
               </small>
             </div>
           </div>
@@ -337,7 +337,7 @@ function Detail({ item, now, busy, defaultN, n, onCopy, setN, onSummarize, onDef
 
           {item.draft && (
             <div className="draft">
-              <div className="draft-head"><b>Draft reply</b><small>copy only, never sent</small><button onClick={() => onCopy(item.draft!)}>Copy <kbd>y</kbd></button></div>
+              <div className="draft-head"><b>Draft reply</b><small>copy only, never sent</small><button onClick={() => onCopy(item.draft!)}>Copy <kbd>{keys.copy}</kbd></button></div>
               <div className="body">{item.draft}</div>
             </div>
           )}

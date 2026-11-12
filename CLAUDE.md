@@ -24,5 +24,9 @@ Built and unit-tested in a Linux cloud container with fixtures. Please verify, i
 - Summary size: 20/50/100/200/custom (max 500), default 20 and changeable in the UI. Older history is pulled from WAHA with a GET when fewer messages are stored.
 - This replaced the old global `ALLOW_CHAT_TO_LLM` switch; consent is now per chat.
 
-## Tunables
+## Settings (everything is configurable)
+`src/server/settings.ts` holds the schema (FIELDS). Precedence: default < `.env` < saved (SQLite `settings`, keys `cfg.*`). Secrets (Jira/GitHub tokens, WAHA key, webhook token) live in the macOS Keychain (`secrets.ts`; file fallback off-Mac) and are never returned by the API or logged. `ConfigManager` mutates the shared `cfg` in place, adapters read `cfg` per call, rule-affecting saves trigger an immediate rebuild. UI: `src/web/Settings.tsx` (press `,`). Add a new option = add a FIELDS entry + use `cfg.x`.
+Verify on the Mac: Settings → each group's "Test ..." button, then the Keychain prompts when saving a token.
+
+## Tunables (also in Settings)
 Nag window defaults to 08:00-01:00 every day (`WORK_START_HOUR`, `WORK_END_HOUR`, `WORK_DAYS`); reply-owed hours `REPLY_HOURS`; poll interval `POLL_MINUTES`.

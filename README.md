@@ -12,12 +12,12 @@ bun run demo      # made-up data, http://127.0.0.1:3571
 bun test
 ```
 
-Real data: `cp .env.example .env`, fill it in, `bun run dev`. Run at login: `scripts/install-launchd.sh`.
+Real data: `bun run dev`, open the app, press `,` for **Settings** and fill in Jira, GitHub, WhatsApp and the rest (tokens go to the macOS Keychain). `.env` still works and is optional; saved settings win over it. Everything applies live, no restart (except port/host). Run at login: `scripts/install-launchd.sh`.
 First read `CLAUDE.md` (what is verified vs not) and `SPIKE.md` (WhatsApp and Reminders checks).
 
 ## Keys
 
-`j/k` move · `o` open · `a` accept · `d` dismiss · `s` snooze 4h · `r` remind · `x` complete reminder · `t` Jira transition · `m` Jira comment · `z` summarise chat (last 20/50/100/200/custom) · `w` cycle Claude mode for a chat (manual → auto → never) · `c` draft reply · `y` copy draft · `v` group by verdict/lane · `i` judge now · `g` refresh · `u` undo · `?` help
+`j/k` move · `o` open · `a` accept · `d` dismiss · `s` snooze 4h · `r` remind · `x` complete reminder · `t` Jira transition · `m` Jira comment · `z` summarise chat (last 20/50/100/200/custom) · `w` cycle Claude mode for a chat (manual → auto → never) · `c` draft reply · `y` copy draft · `v` group by verdict/lane · `i` judge now · `g` refresh · `u` undo · `,` settings · `?` help (every key can be rebound in Settings → Keyboard)
 
 ## Status
 

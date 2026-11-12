@@ -110,6 +110,7 @@ export function createApi({ db, cfg, adapters, run, settings, reminders: reminde
           errors[k] = String(e?.message ?? e);
         }
       }
+      refresh(); // rule settings (reply hours, stale days, flags, ignored authors) apply to the inbox right away
       return json({ ok: Object.keys(errors).length === 0, errors, ...settings.describe() }, Object.keys(errors).length ? 400 : 200);
     }
     if (method === "POST" && path === "/settings/test") {

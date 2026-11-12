@@ -314,3 +314,16 @@ describe("api + connection tests", () => {
     expect(seen.every((s) => s.startsWith("GET"))).toBe(true);
   });
 });
+
+describe("saving a rule setting updates the inbox immediately", () => {
+  test("POST /api/settings recomputes flags without waiting for a poll", async () => {
+    const { cfg, db, mgr } = make();
+    upsertEvents(db, demoEvents(Date.now()));
+    rebuildItems(db, { now: Date.now(), staleDays: cfg.staleDays, replyHours: cfg.replyHours });
+    const api = createApi({ db, cfg, adapters: [], run: demoRunner, settings: mgr });
+    const inbox = async () => ((await (await api(new Request("http://x/api/inbox")))!.json()) as any).items.map((i: any) => i.itemKey);
+    expect(await inbox()).toContain("ticket:WEB-402");
+    await api(new Request("http://x/api/settings", { method: "POST", body: JSON.stringify({ changes: { disabledFlags: ["stale", "assigned"] } }) }));
+    expect(await inbox()).not.toContain("ticket:WEB-402");
+  });
+});
