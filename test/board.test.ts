@@ -213,7 +213,7 @@ describe("GitHub issues on the board", () => {
 });
 
 describe("cards from a single message", () => {
-  const chat = (id: string, body: string): NormalizedEvent => ({ ...base, source: "whatsapp", sourceId: id, kind: "chat", nativeKey: "chat:g1", ticketKey: null, title: "Acme Support Group", author: "Dana", body });
+  const chat = (id: string, body: string): NormalizedEvent => ({ ...base, source: "whatsapp", sourceId: id, kind: "chat", nativeKey: "chat:g1", ticketKey: null, title: "Acme Support Group", author: "Dana", body, meta: {} });
   test("makes a Pending card with a link back, and refuses a duplicate", () => {
     const db = openDb(":memory:");
     upsertEvents(db, [chat("m1", "Can you check the invoice export? It fails for EU customers.")]);
