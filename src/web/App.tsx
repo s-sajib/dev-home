@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InboxItem, SourceStatus } from "../server/types";
 import { FLAG_LABEL, SOURCE_LABEL, VERDICT_LABEL, ago, buildGroups, sortFlags } from "./format";
 
-type Item = InboxItem & { draft: string | null };
+type LlmMode = "manual" | "auto" | "never";
+interface SummaryDto { n: number; summary: string; actionItems: string[]; replyNeeded: boolean; sensitive: boolean; createdAt: number }
+type Item = InboxItem & { draft: string | null; llmMode: LlmMode | null; summary: SummaryDto | null };
 
 interface InboxResponse {
   now: number;
@@ -11,7 +13,7 @@ interface InboxResponse {
   statuses: SourceStatus[];
   configured: { jira: boolean; github: boolean; reminders: boolean; whatsapp: boolean };
   transitions: string[];
-  chatToLlm: boolean;
+  settings: { summaryN: number };
   demo: boolean;
 }
 
@@ -24,6 +26,7 @@ export function App() {
   const [modal, setModal] = useState<Modal>(null);
   const [grouping, setGrouping] = useState<"auto" | "verdict" | "lane">("auto");
   const [busy, setBusy] = useState<string | null>(null);
+  const [sumN, setSumN] = useState<number | null>(null); // chosen message count for the next summary (null = default)
   const toastTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => setData(await (await fetch("/api/inbox")).json()), []);
@@ -75,6 +78,25 @@ export function App() {
     return r;
   };
 
+  const defaultN = data?.settings.summaryN ?? 20;
+  const summarize = async (n = sumN ?? defaultN) => {
+    if (!current?.itemKey.startsWith("chat:")) return say("Summaries are for WhatsApp chats.", { error: true });
+    say(`Summarising the last ${n} messages…`);
+    const r = await act("summarize", { n });
+    if (r?.summary) say(`Summary ready (last ${r.summary.n} messages).`);
+  };
+  const setDefaultN = async (n: number) => {
+    await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ summaryN: n }) });
+    say(`Default is now ${n} messages.`);
+    await load();
+  };
+  const setMode = async (mode: LlmMode) => {
+    if (!current) return;
+    await post(current.itemKey, "llm-mode", { mode });
+    say(mode === "auto" ? "Auto: new activity in this chat is summarised and drafted for you (never sent)." : mode === "never" ? "Never: this chat's text will not be sent to Claude." : "Manual: Claude only sees this chat when you press a key.");
+    await load();
+  };
+
   const copy = async (text: string) => {
     try { await navigator.clipboard.writeText(text); say("Draft copied. Paste it into WhatsApp yourself; this tool never sends."); } catch { say("Copy failed", { error: true }); }
   };
@@ -114,6 +136,8 @@ export function App() {
         case "v": setGrouping(mode === "verdict" ? "lane" : "verdict"); break;
         case "r": act("remind", { hours: 2 }, "Reminder created in Work Inbox (due in 2h)."); break;
         case "x": act("complete", {}, "Reminder completed."); break;
+        case "z": summarize(); break;
+        case "w": if (current?.llmMode) setMode(({ manual: "auto", auto: "never", never: "manual" } as const)[current.llmMode]); break;
         case "c": if (current) { say("Drafting…"); act("draft", {}).then((r) => r?.draft && say("Draft ready. Press y to copy.")); } break;
         case "y": if (current?.draft) copy(current.draft); break;
         case "t": if (current?.ticketKey) setModal({ kind: "transition", picked: null }); else say("No linked Jira ticket.", { error: true }); break;
@@ -167,6 +191,9 @@ export function App() {
                     <div className="srcs">{it.sources.map((s) => <span key={s} className={`src ${s}`}>{SOURCE_LABEL[s]}</span>)}</div>
                     <div className="title">{it.title}</div>
                     <div className="meta">
+                      {it.llmMode === "auto" && <span className="flag mode auto">auto</span>}
+                      {it.llmMode === "never" && <span className="flag mode never">no AI</span>}
+                      {it.summary?.sensitive && <span className="flag sensitive">sensitive?</span>}
                       {it.verdict && mode === "lane" && <span className={`flag verdict ${it.verdict}`}>{VERDICT_LABEL[it.verdict]}</span>}
                       {top && <span className={`flag ${top}`}>{FLAG_LABEL[top]}</span>}
                       <span className="when">{ago(it.lastActivity, data.now)}</span>
@@ -180,7 +207,7 @@ export function App() {
         </div>
 
         <aside className="detail">
-          {current ? <Detail item={current} now={data.now} onCopy={copy} drafting={busy === "draft"} chatToLlm={data.chatToLlm} /> : <div className="empty">Select an item</div>}
+          {current ? <Detail item={current} now={data.now} onCopy={copy} busy={busy} defaultN={defaultN} n={sumN ?? defaultN} setN={setSumN} onSummarize={summarize} onDefault={setDefaultN} onMode={setMode} /> : <div className="empty">Select an item</div>}
         </aside>
       </main>
 
@@ -200,6 +227,8 @@ export function App() {
         <span><kbd>r</kbd> remind</span>
         <span><kbd>t</kbd> transition</span>
         <span><kbd>m</kbd> comment</span>
+        <span><kbd>z</kbd> summarise</span>
+        <span><kbd>w</kbd> auto/never</span>
         <span><kbd>c</kbd> draft</span>
         <span><kbd>y</kbd> copy</span>
         <span><kbd>v</kbd> group</span>
@@ -239,8 +268,20 @@ function Overlay({ children }: { children: React.ReactNode }) {
   return <div className="overlay"><div className="card">{children}</div></div>;
 }
 
-function Detail({ item, now, onCopy, drafting, chatToLlm }: { item: Item; now: number; onCopy: (t: string) => void; drafting: boolean; chatToLlm: boolean }) {
-  const isChat = item.sources.includes("whatsapp");
+const PRESETS = [20, 50, 100, 200];
+
+interface DetailProps {
+  item: Item; now: number; busy: string | null; defaultN: number; n: number;
+  onCopy: (t: string) => void; setN: (n: number) => void; onSummarize: (n: number) => void;
+  onDefault: (n: number) => void; onMode: (m: LlmMode) => void;
+}
+
+function Detail({ item, now, busy, defaultN, n, onCopy, setN, onSummarize, onDefault, onMode }: DetailProps) {
+  const isChat = item.itemKey.startsWith("chat:");
+  const [custom, setCustom] = useState("");
+  const isCustom = !PRESETS.includes(n);
+  const never = item.llmMode === "never";
+  const sm = item.summary;
   return (
     <div>
       <h1>{item.url ? <a href={item.url} target="_blank" rel="noopener noreferrer">{item.title}</a> : item.title}</h1>
@@ -252,16 +293,55 @@ function Detail({ item, now, onCopy, drafting, chatToLlm }: { item: Item; now: n
       {item.reason && <p className="reason">{item.reason}</p>}
 
       {isChat && (
-        <div className="draft">
-          {item.draft ? (
-            <>
+        <>
+          <div className="aibar">
+            <div className="aibar-row">
+              <span className="aibar-label">Summarise last</span>
+              <div className="seg">
+                {PRESETS.map((p) => (
+                  <button key={p} className={n === p ? "on" : ""} disabled={never} onClick={() => setN(p)}>{p}{p === defaultN && <i title="default"> ★</i>}</button>
+                ))}
+                <input
+                  className={isCustom ? "on" : ""} placeholder="custom" inputMode="numeric" value={custom} disabled={never}
+                  onChange={(e) => { setCustom(e.target.value.replace(/\D/g, "")); const v = Number(e.target.value.replace(/\D/g, "")); if (v > 0) setN(Math.min(v, 500)); }}
+                />
+              </div>
+              <button className="go" disabled={never || busy === "summarize"} onClick={() => onSummarize(n)}>{busy === "summarize" ? "Summarising…" : <>Summarise <kbd>z</kbd></>}</button>
+              {n !== defaultN && <button className="link" onClick={() => onDefault(n)}>make {n} the default</button>}
+            </div>
+            <div className="aibar-row">
+              <span className="aibar-label">Claude for this chat</span>
+              <div className="seg">
+                {(["manual", "auto", "never"] as const).map((m) => (
+                  <button key={m} className={item.llmMode === m ? `on ${m}` : ""} onClick={() => onMode(m)}>{m[0]!.toUpperCase() + m.slice(1)}</button>
+                ))}
+              </div>
+              <small className="dim">
+                {item.llmMode === "auto" ? "new activity is summarised and drafted automatically; nothing is ever sent" : never ? "chat text is never sent to Claude" : "Claude only sees this chat when you press a key"} <kbd>w</kbd>
+              </small>
+            </div>
+          </div>
+
+          {sm && (
+            <div className="summary">
+              <div className="draft-head">
+                <b>Summary</b>
+                {sm.replyNeeded && <span className="flag needs_reply">reply needed</span>}
+                {sm.sensitive && <span className="flag sensitive">may be sensitive</span>}
+                <small>last {sm.n} messages · {ago(sm.createdAt, now)}</small>
+              </div>
+              <p>{sm.summary}</p>
+              {sm.actionItems.length > 0 && <ul>{sm.actionItems.map((a, i) => <li key={i}>{a}</li>)}</ul>}
+            </div>
+          )}
+
+          {item.draft && (
+            <div className="draft">
               <div className="draft-head"><b>Draft reply</b><small>copy only, never sent</small><button onClick={() => onCopy(item.draft!)}>Copy <kbd>y</kbd></button></div>
               <div className="body">{item.draft}</div>
-            </>
-          ) : (
-            <div className="dim">{drafting ? "Drafting…" : chatToLlm ? <>Press <kbd>c</kbd> to draft a reply from this chat and the linked ticket.</> : <>Drafting is off: chat text is not allowed to go to the LLM yet (<code>ALLOW_CHAT_TO_LLM=1</code>).</>}</div>
+            </div>
           )}
-        </div>
+        </>
       )}
 
       <ol className="timeline">

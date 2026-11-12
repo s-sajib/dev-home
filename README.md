@@ -17,7 +17,7 @@ First read `CLAUDE.md` (what is verified vs not) and `SPIKE.md` (WhatsApp and Re
 
 ## Keys
 
-`j/k` move · `o` open · `a` accept · `d` dismiss · `s` snooze 4h · `r` remind · `x` complete reminder · `t` Jira transition · `m` Jira comment · `c` draft reply · `y` copy draft · `v` group by verdict/lane · `i` judge now · `g` refresh · `u` undo · `?` help
+`j/k` move · `o` open · `a` accept · `d` dismiss · `s` snooze 4h · `r` remind · `x` complete reminder · `t` Jira transition · `m` Jira comment · `z` summarise chat (last 20/50/100/200/custom) · `w` cycle Claude mode for a chat (manual → auto → never) · `c` draft reply · `y` copy draft · `v` group by verdict/lane · `i` judge now · `g` refresh · `u` undo · `?` help
 
 ## Status
 
